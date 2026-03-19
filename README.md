@@ -117,8 +117,6 @@ The skill is self-contained: `SKILL.md` defines the full autonomous workflow, an
 
 | Constraint | Value |
 |-----------|-------|
-| Poll interval | 30 seconds |
-| Invitation claim window | ~1 minute |
 | Answer deadline | ~3 minutes after claim |
 | Question submission rate | 1 per minute |
 
