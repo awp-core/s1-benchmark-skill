@@ -327,7 +327,7 @@ def _handle_answer(assigned: dict) -> None:
         try:
             deadline = datetime.fromisoformat(reply_ddl.replace("Z", "+00:00"))
             remaining = (deadline - datetime.now(timezone.utc)).total_seconds() - 15
-            timeout = max(remaining, 30)
+            timeout = min(max(remaining, 30), 300)
         except (ValueError, TypeError):
             pass
 
@@ -349,7 +349,10 @@ def _handle_answer(assigned: dict) -> None:
         }
     )
     result = signed_request("POST", "/api/v1/answers", body)
-    status = "OK" if '"ok":true' in result.replace(" ", "").lower() else "ERR"
+    try:
+        status = "OK" if json.loads(result).get("ok") else "ERR"
+    except json.JSONDecodeError:
+        status = "ERR"
     validity = "valid" if valid else "invalid"
     log.info('[A#%s] %s "%s" -> %s', qid, validity, answer[:40], status)
 
@@ -418,7 +421,7 @@ def _handle_ask() -> None:
 # ---------------------------------------------------------------------------
 
 
-def run_loop(address: str) -> None:
+def run_loop() -> None:
     """Main worker loop: poll -> answer or ask -> repeat."""
     counter = 0
     last_unlock = time.monotonic()
@@ -539,7 +542,7 @@ def main() -> None:
     print(json.dumps({"ok": True, "message": "worker started", "address": address}))
 
     # 4. Main loop
-    run_loop(address)
+    run_loop()
 
 
 if __name__ == "__main__":
