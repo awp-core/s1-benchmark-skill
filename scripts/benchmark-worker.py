@@ -279,7 +279,7 @@ def _call_openclaw_http(prompt: str, timeout: float) -> str | None:
 
 
 def _call_openclaw_cli(prompt: str, timeout: float) -> str | None:
-    """Call OpenClaw via CLI as fallback."""
+    """Call OpenClaw via CLI (preferred method, always available)."""
     try:
         result = subprocess.run(
             [
@@ -289,17 +289,35 @@ def _call_openclaw_cli(prompt: str, timeout: float) -> str | None:
                 OPENCLAW_AGENT_ID,
                 "--message",
                 prompt,
+                "--local",  # use embedded gateway, no running service needed
+                "--json",  # machine-readable output
+                "--timeout",
+                str(int(timeout)),
             ],
             capture_output=True,
             text=True,
-            timeout=int(timeout),
+            timeout=int(timeout) + 10,  # extra buffer beyond openclaw's own timeout
         )
         if result.returncode == 0 and result.stdout.strip():
+            # --json output: try to extract text from JSON response
+            try:
+                data = json.loads(result.stdout)
+                text = extract_text_from_response(data)
+                if text:
+                    return text
+            except json.JSONDecodeError:
+                pass
+            # Plain text output
             return result.stdout.strip()
+        if result.stderr.strip():
+            log.warning("[OPENCLAW] CLI stderr: %s", result.stderr.strip()[:200])
         log.warning("[OPENCLAW] CLI failed: exit %d", result.returncode)
         return None
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        log.warning("[OPENCLAW] CLI not available or timed out")
+    except subprocess.TimeoutExpired:
+        log.warning("[OPENCLAW] CLI timed out after %ds", int(timeout))
+        return None
+    except FileNotFoundError:
+        log.warning("[OPENCLAW] 'openclaw' command not found")
         return None
 
 
