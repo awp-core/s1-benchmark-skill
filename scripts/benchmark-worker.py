@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Standalone benchmark worker — polls, answers, and asks in a loop.
 
-Delegates signing to benchmark-sign.sh, LLM reasoning to local OpenClaw.
+Delegates signing to benchmark-sign.sh.
+When LLM reasoning is needed, writes task files to a queue directory.
+An external agent (OpenClaw) processes those tasks on a cron schedule.
 """
 
 import json
@@ -14,17 +16,13 @@ import subprocess
 import sys
 import time
 from datetime import datetime, timezone
-
-import requests
+from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Configuration (environment variables with defaults)
 # ---------------------------------------------------------------------------
 
 BENCHMARK_API_URL: str = os.environ.get("BENCHMARK_API_URL", "https://tapis1.awp.sh")
-OPENCLAW_URL: str = os.environ.get("OPENCLAW_URL", "http://127.0.0.1:18789")
-OPENCLAW_TOKEN: str = os.environ.get("OPENCLAW_TOKEN", "")
-OPENCLAW_AGENT_ID: str = os.environ.get("OPENCLAW_AGENT_ID", "main")
 
 SCRIPT_DIR: str = os.path.dirname(os.path.abspath(__file__))
 SIGN_SCRIPT: str = os.path.join(SCRIPT_DIR, "benchmark-sign.sh")
@@ -35,9 +33,13 @@ NET_RETRY_SLEEP: int = 10  # seconds after network error
 SUSPEND_SLEEP: int = 60  # seconds when suspended
 UNLOCK_INTERVAL: int = 25 * 60  # re-unlock every 25 minutes
 ASK_EVERY_N: int = 6  # ask a question every N idle polls
+TASK_WAIT_TIMEOUT: int = 150  # max seconds to wait for agent response
+TASK_POLL_INTERVAL: int = 2  # seconds between checks for agent response
+
 STATUS_FILE: str = os.environ.get(
     "BENCHMARK_STATUS_FILE", "/tmp/benchmark-worker-status.json"
 )
+TASK_DIR: str = os.environ.get("BENCHMARK_TASK_DIR", "/tmp/benchmark-tasks")
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -116,6 +118,11 @@ def _record_action(action: str) -> None:
     _last_action_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+# ---------------------------------------------------------------------------
+# Wallet helpers
+# ---------------------------------------------------------------------------
+
+
 def get_wallet_address() -> str | None:
     """Return the wallet address, or None if no wallet is initialized."""
     try:
@@ -190,168 +197,49 @@ def signed_request(method: str, path: str, body: str = "") -> str:
 
 
 # ---------------------------------------------------------------------------
-# OpenClaw integration
+# Task queue: file-based communication with OpenClaw agent
 # ---------------------------------------------------------------------------
 
 
-_openclaw_endpoint: str = ""  # auto-detected on first call
+def _ensure_task_dirs() -> None:
+    """Create task queue directories if they don't exist."""
+    Path(TASK_DIR, "pending").mkdir(parents=True, exist_ok=True)
+    Path(TASK_DIR, "done").mkdir(parents=True, exist_ok=True)
 
 
-def _detect_openclaw_endpoint() -> str:
-    """Auto-detect which OpenClaw API endpoint is available."""
-    global _openclaw_endpoint
-    if _openclaw_endpoint:
-        return _openclaw_endpoint
-
-    headers: dict[str, str] = {"Content-Type": "application/json"}
-    if OPENCLAW_TOKEN:
-        headers["Authorization"] = f"Bearer {OPENCLAW_TOKEN}"
-
-    # Try endpoints in order of preference
-    endpoints = [
-        "/v1/responses",  # OpenResponses API (needs config to enable)
-        "/v1/chat/completions",  # OpenAI-compatible (commonly enabled)
-    ]
-    for ep in endpoints:
-        try:
-            resp = requests.post(
-                f"{OPENCLAW_URL}{ep}",
-                json={"model": "openclaw", "input": "ping"},
-                headers=headers,
-                timeout=10,
-            )
-            if resp.status_code != 404:
-                _openclaw_endpoint = ep
-                log.info("[OPENCLAW] using endpoint: %s", ep)
-                return ep
-        except requests.RequestException:
-            continue
-
-    # Default to /v1/responses
-    _openclaw_endpoint = "/v1/responses"
-    log.warning("[OPENCLAW] no endpoint responded, defaulting to /v1/responses")
-    return _openclaw_endpoint
+def _write_task(task_id: str, task_data: dict) -> Path:
+    """Write a task file to the pending directory."""
+    task_data["id"] = task_id
+    task_data["created_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    task_data["status"] = "pending"
+    path = Path(TASK_DIR, "pending", f"{task_id}.json")
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(task_data, indent=2))
+    tmp.rename(path)
+    log.info("[TASK] wrote %s", task_id)
+    return path
 
 
-def call_openclaw(prompt: str, timeout: float = 120) -> str | None:
-    """Call local OpenClaw and return the text output, or None.
-
-    Priority: CLI via RPC → CLI --local → HTTP endpoint.
-    """
-    # 1. CLI via running gateway RPC (no HTTP, always enabled)
-    result = _call_openclaw_cli(prompt, timeout, local=False)
-    if result is not None:
-        return result
-
-    # 2. CLI with embedded gateway (--local)
-    result = _call_openclaw_cli(prompt, timeout, local=True)
-    if result is not None:
-        return result
-
-    # 3. HTTP endpoint (needs gateway.http.endpoints config)
-    return _call_openclaw_http(prompt, timeout)
-
-
-def _call_openclaw_cli(prompt: str, timeout: float, *, local: bool) -> str | None:
-    """Call OpenClaw via CLI.
-
-    Without --local: connects to running gateway via WebSocket RPC (preferred).
-    With --local: starts embedded gateway in-process.
-    """
-    cmd = [
-        "openclaw",
-        "agent",
-        "--agent",
-        OPENCLAW_AGENT_ID,
-        "--message",
-        prompt,
-        "--timeout",
-        str(int(timeout)),
-    ]
-    if local:
-        cmd.append("--local")
-
-    mode = "local" if local else "rpc"
-    try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=int(timeout) + 10,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            # Try JSON parse first
+def _wait_for_response(task_id: str, timeout: float) -> dict | None:
+    """Wait for the agent to write a response file in the done directory."""
+    done_path = Path(TASK_DIR, "done", f"{task_id}.json")
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline and running:
+        if done_path.exists():
             try:
-                data = json.loads(result.stdout)
-                text = extract_text_from_response(data)
-                if text:
-                    return text
-            except json.JSONDecodeError:
-                pass
-            # Plain text output
-            return result.stdout.strip()
-        if result.stderr.strip():
-            log.warning(
-                "[OPENCLAW] CLI(%s) stderr: %s", mode, result.stderr.strip()[:200]
-            )
-        log.warning("[OPENCLAW] CLI(%s) failed: exit %d", mode, result.returncode)
-        return None
-    except subprocess.TimeoutExpired:
-        log.warning("[OPENCLAW] CLI(%s) timed out after %ds", mode, int(timeout))
-        return None
-    except FileNotFoundError:
-        log.warning("[OPENCLAW] 'openclaw' command not found")
-        return None
-
-
-def _call_openclaw_http(prompt: str, timeout: float) -> str | None:
-    """Call OpenClaw via HTTP API (fallback, needs endpoints enabled in config)."""
-    endpoint = _detect_openclaw_endpoint()
-    headers: dict[str, str] = {"Content-Type": "application/json"}
-    if OPENCLAW_TOKEN:
-        headers["Authorization"] = f"Bearer {OPENCLAW_TOKEN}"
-    headers["x-openclaw-agent-id"] = OPENCLAW_AGENT_ID
-
-    if "chat/completions" in endpoint:
-        payload: dict = {
-            "model": f"openclaw:{OPENCLAW_AGENT_ID}",
-            "messages": [{"role": "user", "content": prompt}],
-        }
-    else:
-        payload = {"model": "openclaw", "input": prompt}
-
-    try:
-        resp = requests.post(
-            f"{OPENCLAW_URL}{endpoint}",
-            json=payload,
-            headers=headers,
-            timeout=timeout,
-        )
-        resp.raise_for_status()
-        return extract_text_from_response(resp.json())
-    except requests.RequestException as e:
-        log.warning("[OPENCLAW] HTTP request failed: %s", e)
-        return None
-
-
-def extract_text_from_response(data: dict) -> str | None:
-    """Walk OpenClaw response JSON to find the text output."""
-    # Try output array (OpenAI Responses API format)
-    for item in reversed(data.get("output", [])):
-        # item with content array
-        for block in reversed(item.get("content", [])):
-            if block.get("type") == "output_text" and "text" in block:
-                return block["text"]
-            if "text" in block:
-                return block["text"]
-        # item with direct text
-        if "text" in item:
-            return item["text"]
-    # Fallback: choices array (Chat Completions format)
-    choices = data.get("choices", [])
-    if choices:
-        msg = choices[0].get("message", {})
-        return msg.get("content")
+                data = json.loads(done_path.read_text())
+                done_path.unlink(missing_ok=True)
+                # Also clean up the pending file
+                Path(TASK_DIR, "pending", f"{task_id}.json").unlink(missing_ok=True)
+                log.info("[TASK] got response for %s", task_id)
+                return data
+            except (json.JSONDecodeError, OSError) as e:
+                log.warning("[TASK] failed to read response %s: %s", task_id, e)
+                return None
+        time.sleep(TASK_POLL_INTERVAL)
+    # Timeout — clean up pending file
+    log.warning("[TASK] timeout waiting for %s (%ds)", task_id, int(timeout))
+    Path(TASK_DIR, "pending", f"{task_id}.json").unlink(missing_ok=True)
     return None
 
 
@@ -380,24 +268,6 @@ def parse_json_response(text: str) -> dict | None:
             return json.loads(match.group(0))
         except json.JSONDecodeError:
             pass
-    return None
-
-
-def parse_answer_response(text: str) -> tuple[bool, str]:
-    """Parse answer from LLM response. Returns (valid, answer)."""
-    data = parse_json_response(text)
-    if data and "answer" in data:
-        return bool(data.get("valid", True)), str(data["answer"])
-    log.warning("[PARSE] failed to parse answer JSON, using raw text")
-    return True, text.strip()[:1000]
-
-
-def parse_question_response(text: str) -> tuple[str, str] | None:
-    """Parse question from LLM response. Returns (question, answer) or None."""
-    data = parse_json_response(text)
-    if data and "question" in data and "answer" in data:
-        return str(data["question"]), str(data["answer"])
-    log.warning("[PARSE] failed to parse question JSON")
     return None
 
 
@@ -433,7 +303,8 @@ def build_answer_prompt(assignment: dict) -> str:
     parts.append("")
     parts.append("## Instructions")
     parts.append(
-        "1. Judge whether the question is valid (meets requirements, has exactly one correct answer)"
+        "1. Judge whether the question is valid "
+        "(meets requirements, has exactly one correct answer)"
     )
     parts.append(
         "2. If valid, provide the answer. If invalid, still provide your best answer."
@@ -449,7 +320,8 @@ def build_question_prompt(bench_set: dict) -> str:
     """Build the prompt for generating a new question."""
     parts: list[str] = []
     parts.append(
-        "You are an AI worker in the Benchmark Subnet. Generate an original question for the following benchmark set."
+        "You are an AI worker in the Benchmark Subnet. "
+        "Generate an original question for the following benchmark set."
     )
     parts.append("")
     parts.append("## Benchmark Set")
@@ -488,30 +360,45 @@ def _interruptible_sleep(seconds: int) -> None:
 
 
 def _handle_answer(assigned: dict) -> None:
-    """Answer an assigned question with deadline awareness."""
+    """Answer an assigned question. Write task for agent, wait for response."""
     qid = assigned.get("question_id", "?")
     question_text = assigned.get("question", "")
     log.info('[Q#%s] "%s"', qid, question_text[:60])
 
     # Calculate timeout from deadline
-    timeout = 120.0
+    timeout = float(TASK_WAIT_TIMEOUT)
     reply_ddl = assigned.get("reply_ddl", "")
     if reply_ddl:
         try:
             deadline = datetime.fromisoformat(reply_ddl.replace("Z", "+00:00"))
             remaining = (deadline - datetime.now(timezone.utc)).total_seconds() - 15
-            timeout = min(max(remaining, 30), 300)
+            timeout = min(max(remaining, 30), float(TASK_WAIT_TIMEOUT))
         except (ValueError, TypeError):
             pass
 
+    # Write task for agent
+    task_id = f"answer-{qid}-{int(time.time())}"
     prompt = build_answer_prompt(assigned)
-    llm_text = call_openclaw(prompt, timeout=timeout)
+    _write_task(
+        task_id,
+        {
+            "type": "answer",
+            "question_id": qid,
+            "prompt": prompt,
+            "deadline": reply_ddl,
+            "timeout_seconds": int(timeout),
+        },
+    )
 
-    if llm_text is not None:
-        valid, answer = parse_answer_response(llm_text)
+    # Wait for agent response
+    response = _wait_for_response(task_id, timeout)
+
+    if response and "answer" in response:
+        valid = bool(response.get("valid", True))
+        answer = str(response["answer"])
     else:
         # Fallback: wrong answer beats timeout
-        log.warning("[A#%s] OpenClaw timeout/error, submitting fallback", qid)
+        log.warning("[A#%s] no agent response, submitting fallback", qid)
         valid, answer = True, "unknown"
 
     body = json.dumps(
@@ -537,9 +424,7 @@ def _handle_answer(assigned: dict) -> None:
 
 
 def _handle_ask() -> None:
-    """Generate and submit a new question."""
-    # NOTE: benchmark-sets is a public endpoint per the API spec, but we use
-    # signed_request for consistency and future-proofing
+    """Generate and submit a new question. Write task for agent, wait for response."""
     raw = signed_request("GET", "/api/v1/benchmark-sets")
     try:
         sets = json.loads(raw).get("data", [])
@@ -553,33 +438,51 @@ def _handle_ask() -> None:
     chosen = random.choice(sets)
     bs_id = chosen.get("bs_id", "unknown")
 
+    # Write task for agent
+    task_id = f"ask-{bs_id}-{int(time.time())}"
     prompt = build_question_prompt(chosen)
-    llm_text = call_openclaw(prompt)
-    if llm_text is None:
-        log.warning("[ASK] OpenClaw failed, skipping")
+    _write_task(
+        task_id,
+        {
+            "type": "ask",
+            "bs_id": bs_id,
+            "prompt": prompt,
+            "timeout_seconds": TASK_WAIT_TIMEOUT,
+        },
+    )
+
+    # Wait for agent response
+    response = _wait_for_response(task_id, TASK_WAIT_TIMEOUT)
+    if not response or "question" not in response or "answer" not in response:
+        log.warning("[ASK] no valid agent response, skipping")
         return
 
-    parsed = parse_question_response(llm_text)
-    if parsed is None:
-        return
-
-    question, answer = parsed
+    question = str(response["question"])
+    answer = str(response["answer"])
     log.info('[ASK] %s "%s"', bs_id, question[:60])
 
     body = json.dumps({"bs_id": bs_id, "question": question, "answer": answer})
     result = signed_request("POST", "/api/v1/questions", body)
     result_lower = result.lower()
 
-    # Handle duplicate: regenerate once
+    # Handle duplicate: write a new task and retry once
     if "duplicate" in result_lower or "similar" in result_lower:
         log.info("[ASK] duplicate, retrying once")
-        llm_text2 = call_openclaw(prompt)
-        if llm_text2 is not None:
-            parsed2 = parse_question_response(llm_text2)
-            if parsed2 is not None:
-                q2, a2 = parsed2
-                body2 = json.dumps({"bs_id": bs_id, "question": q2, "answer": a2})
-                result = signed_request("POST", "/api/v1/questions", body2)
+        task_id2 = f"ask-{bs_id}-{int(time.time())}-retry"
+        _write_task(
+            task_id2,
+            {
+                "type": "ask",
+                "bs_id": bs_id,
+                "prompt": prompt,
+                "timeout_seconds": TASK_WAIT_TIMEOUT,
+            },
+        )
+        response2 = _wait_for_response(task_id2, TASK_WAIT_TIMEOUT)
+        if response2 and "question" in response2 and "answer" in response2:
+            q2, a2 = str(response2["question"]), str(response2["answer"])
+            body2 = json.dumps({"bs_id": bs_id, "question": q2, "answer": a2})
+            result = signed_request("POST", "/api/v1/questions", body2)
 
     # Log result
     try:
@@ -632,7 +535,8 @@ def run_loop() -> None:
                 json.dumps(
                     {
                         "ok": False,
-                        "error": "Not registered on AWP RootNet. Please register via AWP skill first.",
+                        "error": "Not registered on AWP RootNet. "
+                        "Please register via AWP skill first.",
                     }
                 )
             )
@@ -688,7 +592,8 @@ def main() -> None:
             json.dumps(
                 {
                     "ok": False,
-                    "error": "Wallet not initialized. Please run awp-wallet init and unlock first.",
+                    "error": "Wallet not initialized. "
+                    "Please run awp-wallet init and unlock first.",
                 }
             )
         )
@@ -705,13 +610,17 @@ def main() -> None:
     except OSError:
         pass
 
+    # Ensure task queue directories exist
+    _ensure_task_dirs()
+
     # 2. Unlock wallet
     if not unlock_wallet():
         print(
             json.dumps(
                 {
                     "ok": False,
-                    "error": "Failed to unlock wallet. Please run awp-wallet unlock --duration 3600.",
+                    "error": "Failed to unlock wallet. "
+                    "Please run awp-wallet unlock --duration 3600.",
                 }
             )
         )
@@ -724,7 +633,8 @@ def main() -> None:
             json.dumps(
                 {
                     "ok": False,
-                    "error": "Not registered on AWP RootNet. Please register via AWP skill first.",
+                    "error": "Not registered on AWP RootNet. "
+                    "Please register via AWP skill first.",
                 }
             )
         )
@@ -732,6 +642,7 @@ def main() -> None:
 
     short_addr = f"{address[:6]}...{address[-4:]}"
     log.info("[SETUP] wallet %s | api connected | ready", short_addr)
+    log.info("[SETUP] task dir: %s", TASK_DIR)
     print(json.dumps({"ok": True, "message": "worker started", "address": address}))
 
     # 4. Write initial status and start main loop
