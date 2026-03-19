@@ -103,7 +103,7 @@ while true; do
   fi
 
   # ── poll ──────────────────────────────────────────────────
-  RESULT=$(sign POST /api/v1/poll '{"action":"online"}' 2>/dev/null) || RESULT=""
+  RESULT=$(sign GET /api/v1/poll 2>/dev/null) || RESULT=""
 
   if [ -z "$RESULT" ]; then
     log "[POLL] no response, retrying in 10s..."
@@ -141,14 +141,11 @@ while true; do
   fi
 
   # ── check for assignment ──────────────────────────────────
-  STATUS=$(echo "$RESULT" | jq -r '.data.status // .status // empty' 2>/dev/null)
-  INVITATION=$(echo "$RESULT" | jq -r '.data.invitation // .invitation // empty' 2>/dev/null)
+  ASSIGNED=$(echo "$RESULT" | jq -r '.data.assigned // empty' 2>/dev/null)
 
-  # Detect assignment: invitation is a non-null JSON object
   HAS_ASSIGNMENT=false
-  if [ "$INVITATION" != "null" ] && [ "$INVITATION" != "" ]; then
-    # Verify it's actually a JSON object with question_id
-    QID=$(echo "$RESULT" | jq -r '.data.invitation.question_id // .invitation.question_id // empty' 2>/dev/null)
+  if [ "$ASSIGNED" != "null" ] && [ "$ASSIGNED" != "" ]; then
+    QID=$(echo "$RESULT" | jq -r '.data.assigned.question_id // empty' 2>/dev/null)
     if [ -n "$QID" ] && [ "$QID" != "null" ]; then
       HAS_ASSIGNMENT=true
     fi
@@ -156,11 +153,11 @@ while true; do
 
   if [ "$HAS_ASSIGNMENT" = true ]; then
     # ── ANSWER MODE ─────────────────────────────────────────
-    QUESTION=$(echo "$RESULT" | jq -r '.data.invitation.question // .invitation.question // empty' 2>/dev/null)
-    DDL=$(echo "$RESULT" | jq -r '.data.invitation.reply_ddl // .invitation.reply_ddl // empty' 2>/dev/null)
-    ANSWER_MAXLEN=$(echo "$RESULT" | jq -r '.data.invitation.answer_maxlen // .invitation.answer_maxlen // 200' 2>/dev/null)
-    Q_REQS=$(echo "$RESULT" | jq -r '.data.invitation.question_requirements // .invitation.question_requirements // empty' 2>/dev/null)
-    A_REQS=$(echo "$RESULT" | jq -r '.data.invitation.answer_requirements // .invitation.answer_requirements // empty' 2>/dev/null)
+    QUESTION=$(echo "$RESULT" | jq -r '.data.assigned.question // empty' 2>/dev/null)
+    DDL=$(echo "$RESULT" | jq -r '.data.assigned.reply_ddl // empty' 2>/dev/null)
+    ANSWER_MAXLEN=$(echo "$RESULT" | jq -r '.data.assigned.answer_maxlen // 200' 2>/dev/null)
+    Q_REQS=$(echo "$RESULT" | jq -r '.data.assigned.question_requirements // empty' 2>/dev/null)
+    A_REQS=$(echo "$RESULT" | jq -r '.data.assigned.answer_requirements // empty' 2>/dev/null)
 
     log "[POLL] assignment received: Q#$QID"
     log "[SOLVE] \"${QUESTION:0:100}\""
@@ -213,7 +210,7 @@ while true; do
   fi
 
   # ── IDLE MODE ─────────────────────────────────────────────
-  log "[POLL] idle (status=$STATUS)"
+  log "[POLL] idle"
 
   # Check if agent wrote a question to submit
   if [ -f "$QUESTION_FILE" ]; then
@@ -238,17 +235,17 @@ while true; do
   if [ $((NOW - LAST_SCORE_CHECK)) -ge $SCORE_CHECK_INTERVAL ]; then
     log "[SCORES] checking..."
     MY_Q=$(sign GET /api/v1/my/questions 2>/dev/null) || MY_Q=""
-    MY_A=$(sign GET /api/v1/my/invitations 2>/dev/null) || MY_A=""
+    MY_A=$(sign GET /api/v1/my/assignments 2>/dev/null) || MY_A=""
 
     if [ -n "$MY_Q" ]; then
       echo "$MY_Q" > /tmp/awp_my_questions.json
     fi
     if [ -n "$MY_A" ]; then
-      echo "$MY_A" > /tmp/awp_my_invitations.json
+      echo "$MY_A" > /tmp/awp_my_assignments.json
     fi
 
     LAST_SCORE_CHECK=$NOW
-    log "[SCORES] updated → /tmp/awp_my_questions.json, /tmp/awp_my_invitations.json"
+    log "[SCORES] updated → /tmp/awp_my_questions.json, /tmp/awp_my_assignments.json"
   fi
 
   COUNTER=$((COUNTER + 1))
