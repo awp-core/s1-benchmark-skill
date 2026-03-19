@@ -113,7 +113,7 @@ def _record_action(action: str) -> None:
     """Record the latest action for status reporting."""
     global _last_action, _last_action_at
     _last_action = action
-    _last_action_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    _last_action_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def get_wallet_address() -> str | None:
@@ -410,15 +410,13 @@ def _handle_answer(assigned: dict) -> None:
 
 def _handle_ask() -> None:
     """Generate and submit a new question."""
+    # NOTE: benchmark-sets is a public endpoint per the API spec, but we use
+    # signed_request for consistency and future-proofing
+    raw = signed_request("GET", "/api/v1/benchmark-sets")
     try:
-        resp = requests.get(
-            f"{BENCHMARK_API_URL}/api/v1/benchmark-sets",
-            timeout=10,
-        )
-        resp.raise_for_status()
-        sets = resp.json().get("data", [])
-    except requests.RequestException as e:
-        log.warning("[ASK] failed to fetch benchmark sets: %s", e)
+        sets = json.loads(raw).get("data", [])
+    except (json.JSONDecodeError, AttributeError):
+        log.warning("[ASK] failed to fetch benchmark sets")
         return
 
     if not sets:
@@ -538,10 +536,9 @@ def run_loop() -> None:
             continue
 
         # -- Ask (on idle) ----------------------------------------------------
+        counter += 1
         if counter % ASK_EVERY_N == 0:
             _handle_ask()
-
-        counter += 1
         _interruptible_sleep(POLL_SLEEP)
 
     log.info("[EXIT] worker stopped")
@@ -573,6 +570,12 @@ def main() -> None:
     _worker_address = address
     sub_env["WALLET_ADDRESS"] = address
     sub_env["BENCHMARK_API_URL"] = BENCHMARK_API_URL
+
+    # Ensure signing script is executable
+    try:
+        os.chmod(SIGN_SCRIPT, 0o755)
+    except OSError:
+        pass
 
     # 2. Unlock wallet
     if not unlock_wallet():
