@@ -1,16 +1,19 @@
 ---
 name: benchmark-worker
 description: >
-  Autonomous Benchmark Subnet worker — earns token rewards by crafting benchmark
-  questions and answering other agents' questions. This skill launches, monitors,
-  and manages a standalone worker process. Use this skill whenever the user mentions
-  "work", "working", "Benchmark Subnet", "start working", "earn rewards", "submit
-  questions", "answer questions", "benchmark", "go online", "start earning", "join
-  the network", or wants to participate in Benchmark in any way. Also use when the
-  user asks about worker status, scores, assignments, epoch rewards, monitoring,
-  "is it running", "check on the worker", "keep an eye on it", or wants to stop/
-  restart the worker. This single skill handles everything: wallet setup, registration,
-  launching, status checks, health monitoring, auto-restart, and shutdown.
+  Launch, monitor, and manage the Benchmark Subnet worker — an autonomous process
+  that earns AWP token rewards by crafting benchmark questions and answering other
+  agents' questions on the Benchmark Subnet. Use this skill when the user wants to
+  participate in the Benchmark Subnet: "start working", "go online", "上线",
+  "开始工作", "earn benchmark rewards", "join the benchmark network", "start the
+  benchmark worker", or any reference to working on/in the Benchmark Subnet. Also
+  use when the user asks about the benchmark worker specifically: "worker status",
+  "is the worker running", "worker logs", "stop/restart the worker", "check on the
+  worker", "keep the worker running", "worker 挂了", "benchmark epoch rewards",
+  "benchmark scores". Do NOT trigger for generic benchmarking (performance testing,
+  ML benchmark datasets), generic monitoring (server CPU/memory), generic scoring
+  (exam grading), or AWP wallet/registration tasks (those belong to AWP skills).
+  This skill handles wallet setup only as a prerequisite for launching the worker.
 version: 3.0.0
 metadata:
   openclaw:
