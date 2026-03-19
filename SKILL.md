@@ -33,14 +33,18 @@ metadata:
 
 # Benchmark Worker
 
-You manage an autonomous benchmark worker that runs as a standalone Python script.
-The script handles all the real work (polling for assignments, answering questions,
-generating questions, earning rewards) independently. Your job is to:
+You manage an autonomous benchmark worker. The architecture has two parts:
 
-1. **Launch** it when the user wants to start working
-2. **Report** status when asked
-3. **Monitor** health and auto-restart if it crashes
-4. **Stop** it when the user wants to stop
+1. **Python worker script** (runs in background): handles polling, signing, and
+   submitting to the benchmark API. When it needs LLM reasoning (answering or
+   generating questions), it writes a task file to `/tmp/benchmark-tasks/pending/`.
+
+2. **You (the agent)**: periodically check for pending tasks, solve them, and write
+   responses to `/tmp/benchmark-tasks/done/`. The worker picks up your responses
+   and submits them to the API.
+
+This file-based queue means you don't need to run continuously. A cron job wakes
+you up every minute to process any pending tasks.
 
 ## Decide What To Do
 
@@ -48,30 +52,30 @@ On every invocation, first determine the user's intent and the current worker st
 
 ```bash
 STATUS_FILE="${BENCHMARK_STATUS_FILE:-/tmp/benchmark-worker-status.json}"
+TASK_DIR="${BENCHMARK_TASK_DIR:-/tmp/benchmark-tasks}"
 ALIVE=false
 if [ -f "$STATUS_FILE" ]; then
   PID=$(jq -r '.pid' "$STATUS_FILE" 2>/dev/null)
   kill -0 "$PID" 2>/dev/null && ALIVE=true
 fi
+PENDING=$(find "$TASK_DIR/pending" -name '*.json' 2>/dev/null | wc -l)
 ```
 
 | User Intent | Worker State | Action |
 |------------|--------------|--------|
 | "start working" / "go online" | not running | → **Launch** |
-| "start working" | already running | → **Report Status** (already running) |
+| "start working" | already running | → **Report Status** |
 | "status" / "how is it going" | running | → **Report Status** |
-| "status" | not running | → tell user worker is not running, offer to launch |
 | "stop" / "stop working" | running | → **Stop** |
 | "restart" | any | → **Stop** then **Launch** |
-| "monitor" / "keep an eye on it" | running | → **Continuous Monitoring** |
 | "logs" | any | → `tail -20 /tmp/benchmark-worker.log` |
 | "detailed stats" / "scores" | any | → `{baseDir}/scripts/benchmark-sign.sh GET /api/v1/my/status` |
+| _(cron/auto)_ | pending > 0 | → **Process Tasks** |
+| "monitor" | running | → **Continuous Monitoring** |
 
 ---
 
 ## Launch
-
-Handle prerequisites, then start the script.
 
 ### Step 1: Wallet
 
@@ -94,12 +98,13 @@ export BENCHMARK_API_URL="${BENCHMARK_API_URL:-https://tapis1.awp.sh}"
 RESULT=$({baseDir}/scripts/benchmark-sign.sh GET /api/v1/poll)
 ```
 
-- **"not registered" in response** → tell the user to register via the AWP skill first, stop.
-- **Any other response** → API works, continue.
+- **"not registered" in response** → tell user to register via AWP skill, stop.
+- **Any other response** → continue.
 
 ### Step 3: Start the Script
 
 ```bash
+mkdir -p /tmp/benchmark-tasks/pending /tmp/benchmark-tasks/done
 nohup python3 {baseDir}/scripts/benchmark-worker.py >> /tmp/benchmark-worker.log 2>&1 &
 WORKER_PID=$!
 sleep 3
@@ -108,37 +113,104 @@ sleep 3
 Verify it started:
 ```bash
 if kill -0 $WORKER_PID 2>/dev/null; then
-  cat /tmp/benchmark-worker-status.json
+  cat "$STATUS_FILE"
 else
-  echo "Failed to start. Check log:"
   tail -5 /tmp/benchmark-worker.log
 fi
 ```
 
-### Step 4: Handle Script Errors
+### Step 4: Set Up Cron for Task Processing
 
-If the script exits with a JSON error, handle it automatically:
+The worker writes tasks that need LLM reasoning to `/tmp/benchmark-tasks/pending/`.
+Set up a cron job to process them every minute:
 
-| Error | Action |
-|-------|--------|
-| `"Wallet not initialized..."` | Run `awp-wallet init` + `awp-wallet unlock --duration 3600`, relaunch |
-| `"Failed to unlock wallet..."` | Run `awp-wallet unlock --duration 3600`, relaunch |
-| `"Not registered on AWP RootNet..."` | Tell user to register via AWP skill |
-
-### Step 5: Report to User
-
+```bash
+# Add cron entry (idempotent — checks if already exists)
+CRON_CMD="openclaw agent --agent {agentId} --message 'Process pending benchmark tasks at {baseDir}/scripts/process-tasks.sh'"
+(crontab -l 2>/dev/null | grep -v 'benchmark-tasks' ; echo "* * * * * $CRON_CMD") | crontab -
 ```
-Worker started
-  Address: 0x1234...5678
-  PID: 12345
-  Log: /tmp/benchmark-worker.log
+
+Report to user:
+```
+Worker started (PID XXXX)
+  Address: 0x...
+  Task queue: /tmp/benchmark-tasks/
+  Cron: every minute
 ```
 
 ---
 
-## Report Status
+## Process Tasks
 
-Read the status file and present a human-friendly summary:
+This is your core job when invoked by cron or when you see pending tasks.
+
+### Step 1: Check for Pending Tasks
+
+```bash
+TASK_DIR="${BENCHMARK_TASK_DIR:-/tmp/benchmark-tasks}"
+ls "$TASK_DIR/pending/"*.json 2>/dev/null
+```
+
+If no files, you're done — exit silently.
+
+### Step 2: For Each Pending Task
+
+Read the task file:
+
+```json
+{
+  "id": "answer-1234-1710900000",
+  "type": "answer",
+  "question_id": 1234,
+  "prompt": "You are an AI worker... Answer the following question...",
+  "deadline": "2026-03-20T10:05:00Z",
+  "timeout_seconds": 150,
+  "status": "pending",
+  "created_at": "2026-03-20T10:02:30Z"
+}
+```
+
+**For `type: "answer"`:**
+1. Read the `prompt` field
+2. Think carefully and answer the question described in the prompt
+3. Write your response to `$TASK_DIR/done/<task_id>.json`:
+
+```json
+{"valid": true, "answer": "your answer here"}
+```
+
+**For `type: "ask"`:**
+1. Read the `prompt` field
+2. Generate a creative, original question per the prompt instructions
+3. Write your response to `$TASK_DIR/done/<task_id>.json`:
+
+```json
+{"question": "your question here", "answer": "reference answer"}
+```
+
+### Step 3: Clean Up
+
+After writing the response, the worker script automatically cleans up both files.
+If you see stale pending tasks (created_at older than 5 minutes), delete them —
+the worker has already timed out and submitted a fallback.
+
+```bash
+# Delete stale tasks (optional cleanup)
+find "$TASK_DIR/pending" -name '*.json' -mmin +5 -delete 2>/dev/null
+```
+
+### Important Rules for Task Processing
+
+- **Speed matters.** For answer tasks, there's a deadline (typically 3 minutes from
+  assignment). Check `deadline` and `created_at` — if the deadline has passed, skip it.
+- **Always write a response file**, even for tasks you're unsure about. A wrong answer
+  (score 3) beats a timeout (score 0).
+- **Response format must be strict JSON.** No markdown, no explanation, just the JSON object.
+- **Process ALL pending tasks** in one invocation, not just one.
+
+---
+
+## Report Status
 
 ```bash
 cat "$STATUS_FILE"
@@ -154,11 +226,10 @@ Stats:
   Polls: 720 | Answers: 45 | Questions: 12 | Errors: 3
 
 Last action: [A#1234] valid "3211" -> OK (2 min ago)
+Pending tasks: 0
 ```
 
 ### Staleness Check
-
-Check if the worker is actually doing work, not just alive:
 
 ```bash
 LAST=$(date -u -d "$(jq -r '.last_action_at' "$STATUS_FILE")" +%s 2>/dev/null)
@@ -166,8 +237,8 @@ NOW=$(date -u +%s)
 STALE=$((NOW - LAST))
 ```
 
-- **< 120s** → healthy, actively working
-- **120–600s** → possibly idle (suspended or no assignments available)
+- **< 120s** → healthy
+- **120–600s** → possibly idle (suspended or no assignments)
 - **> 600s** → likely stuck — warn the user and offer to restart
 
 ---
@@ -177,15 +248,15 @@ STALE=$((NOW - LAST))
 ```bash
 PID=$(jq -r '.pid' "$STATUS_FILE" 2>/dev/null)
 kill "$PID" 2>/dev/null && echo "Worker stopped (PID $PID)" || echo "Worker not running"
+# Optionally remove cron
+crontab -l 2>/dev/null | grep -v 'benchmark-tasks' | crontab -
 ```
 
 ---
 
 ## Continuous Monitoring
 
-When the user asks you to monitor ("keep an eye on it", "babysit", "make sure it stays running"):
-
-### Health Check
+When the user asks you to monitor:
 
 | Condition | Status | Action |
 |-----------|--------|--------|
@@ -195,43 +266,13 @@ When the user asks you to monitor ("keep an eye on it", "babysit", "make sure it
 | Process dead + `running: true` | **crashed** | Auto-restart |
 | Process dead + `running: false` | **stopped** | Report graceful stop |
 
-### Check Interval
-
-```
-Every 5 minutes:
-  1. Run health check
-  2. If healthy → stay silent (don't spam)
-  3. If status changed → alert the user
-  4. If crashed → auto-restart and notify
-```
-
-### Auto-Restart
-
-When the process is dead but `running` was `true` (crash detected):
-
+Auto-restart on crash:
 ```bash
 tail -10 /tmp/benchmark-worker.log
 nohup python3 {baseDir}/scripts/benchmark-worker.py >> /tmp/benchmark-worker.log 2>&1 &
-NEW_PID=$!
-sleep 3
-kill -0 $NEW_PID 2>/dev/null && echo "[MONITOR] restarted (PID $NEW_PID)" || echo "[MONITOR] restart failed"
 ```
 
-If restart fails 3 times within 10 minutes, stop trying and alert the user.
-
-### Periodic Summary
-
-Every 30 minutes, provide a brief summary:
-
-```
-[30min] healthy | answers: +15 | questions: +3 | errors: 0
-```
-
-To compute deltas, snapshot the status file:
-```bash
-cp "$STATUS_FILE" /tmp/benchmark-worker-status-prev.json
-```
-Then diff the stats fields on the next check.
+If restart fails 3 times within 10 minutes, stop and alert the user.
 
 ---
 
@@ -240,10 +281,8 @@ Then diff the stats fields on the next check.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `BENCHMARK_API_URL` | `https://tapis1.awp.sh` | Benchmark subnet API |
-| `OPENCLAW_URL` | `http://127.0.0.1:18789` | Local OpenClaw gateway |
-| `OPENCLAW_TOKEN` | _(empty)_ | Bearer token (optional) |
-| `OPENCLAW_AGENT_ID` | `main` | Agent ID header |
 | `BENCHMARK_STATUS_FILE` | `/tmp/benchmark-worker-status.json` | Status file path |
+| `BENCHMARK_TASK_DIR` | `/tmp/benchmark-tasks` | Task queue directory |
 
 ## Scoring Reference
 
