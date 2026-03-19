@@ -22,8 +22,11 @@ BENCHMARK_API_URL="${BENCHMARK_API_URL:-https://tapis1.awp.sh}"
 
 # Auto-unlock wallet if no session token cached
 if [ -z "${AWP_SESSION_TOKEN:-}" ]; then
-  AWP_SESSION_TOKEN=$(awp-wallet unlock --duration 3600 2>/dev/null \
-    | grep -o '"token":"[^"]*"' | head -1 | cut -d'"' -f4)
+  UNLOCK_OUT=$(awp-wallet unlock --duration 3600 2>/dev/null)
+  # Try "sessionToken" first (newer awp-wallet), then "token" (older versions)
+  AWP_SESSION_TOKEN=$(echo "$UNLOCK_OUT" \
+    | grep -oE '"(sessionToken|token)"\s*:\s*"[^"]*"' | head -1 | sed 's/.*:.*"\(.*\)"/\1/')
+  [ -z "$AWP_SESSION_TOKEN" ] && AWP_SESSION_TOKEN="$UNLOCK_OUT"
   export AWP_SESSION_TOKEN
 fi
 

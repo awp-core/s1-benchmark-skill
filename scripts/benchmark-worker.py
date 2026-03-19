@@ -143,13 +143,23 @@ def unlock_wallet() -> bool:
         if result.returncode != 0:
             log.warning("[WALLET] unlock failed: %s", result.stderr.strip())
             return False
-        match = re.search(r'"token":"([^"]+)"', result.stdout)
+        # awp-wallet may output "token" or "sessionToken" depending on version
+        match = re.search(r'"(?:session[Tt]oken|token)"\s*:\s*"([^"]+)"', result.stdout)
         if match:
             sub_env["AWP_SESSION_TOKEN"] = match.group(1)
             return True
-        # Fallback: if output is just a raw token string
+        # Fallback: try to parse as JSON
+        try:
+            data = json.loads(result.stdout)
+            token = data.get("sessionToken") or data.get("token") or ""
+            if token:
+                sub_env["AWP_SESSION_TOKEN"] = str(token)
+                return True
+        except (json.JSONDecodeError, AttributeError):
+            pass
+        # Last resort: if output is just a raw token string
         token = result.stdout.strip()
-        if token:
+        if token and not token.startswith("{"):
             sub_env["AWP_SESSION_TOKEN"] = token
             return True
         return False
@@ -184,17 +194,79 @@ def signed_request(method: str, path: str, body: str = "") -> str:
 # ---------------------------------------------------------------------------
 
 
+_openclaw_endpoint: str = ""  # auto-detected on first call
+
+
+def _detect_openclaw_endpoint() -> str:
+    """Auto-detect which OpenClaw API endpoint is available."""
+    global _openclaw_endpoint
+    if _openclaw_endpoint:
+        return _openclaw_endpoint
+
+    headers: dict[str, str] = {"Content-Type": "application/json"}
+    if OPENCLAW_TOKEN:
+        headers["Authorization"] = f"Bearer {OPENCLAW_TOKEN}"
+
+    # Try endpoints in order of preference
+    endpoints = [
+        "/v1/responses",  # OpenResponses API (needs config to enable)
+        "/v1/chat/completions",  # OpenAI-compatible (commonly enabled)
+    ]
+    for ep in endpoints:
+        try:
+            resp = requests.post(
+                f"{OPENCLAW_URL}{ep}",
+                json={"model": "openclaw", "input": "ping"},
+                headers=headers,
+                timeout=10,
+            )
+            if resp.status_code != 404:
+                _openclaw_endpoint = ep
+                log.info("[OPENCLAW] using endpoint: %s", ep)
+                return ep
+        except requests.RequestException:
+            continue
+
+    # Default to /v1/responses
+    _openclaw_endpoint = "/v1/responses"
+    log.warning("[OPENCLAW] no endpoint responded, defaulting to /v1/responses")
+    return _openclaw_endpoint
+
+
 def call_openclaw(prompt: str, timeout: float = 120) -> str | None:
-    """Call local OpenClaw /v1/responses and return the text output, or None."""
+    """Call local OpenClaw and return the text output, or None.
+
+    Tries CLI fallback if HTTP endpoint fails.
+    """
+    # Try HTTP endpoint first
+    result = _call_openclaw_http(prompt, timeout)
+    if result is not None:
+        return result
+
+    # Fallback: try openclaw CLI
+    return _call_openclaw_cli(prompt, timeout)
+
+
+def _call_openclaw_http(prompt: str, timeout: float) -> str | None:
+    """Call OpenClaw via HTTP API."""
+    endpoint = _detect_openclaw_endpoint()
     headers: dict[str, str] = {"Content-Type": "application/json"}
     if OPENCLAW_TOKEN:
         headers["Authorization"] = f"Bearer {OPENCLAW_TOKEN}"
     headers["x-openclaw-agent-id"] = OPENCLAW_AGENT_ID
 
-    payload = {"model": "openclaw", "input": prompt}
+    # Build payload based on endpoint type
+    if "chat/completions" in endpoint:
+        payload: dict = {
+            "model": f"openclaw:{OPENCLAW_AGENT_ID}",
+            "messages": [{"role": "user", "content": prompt}],
+        }
+    else:
+        payload = {"model": "openclaw", "input": prompt}
+
     try:
         resp = requests.post(
-            f"{OPENCLAW_URL}/v1/responses",
+            f"{OPENCLAW_URL}{endpoint}",
             json=payload,
             headers=headers,
             timeout=timeout,
@@ -202,7 +274,32 @@ def call_openclaw(prompt: str, timeout: float = 120) -> str | None:
         resp.raise_for_status()
         return extract_text_from_response(resp.json())
     except requests.RequestException as e:
-        log.warning("[OPENCLAW] request failed: %s", e)
+        log.warning("[OPENCLAW] HTTP request failed: %s", e)
+        return None
+
+
+def _call_openclaw_cli(prompt: str, timeout: float) -> str | None:
+    """Call OpenClaw via CLI as fallback."""
+    try:
+        result = subprocess.run(
+            [
+                "openclaw",
+                "agent",
+                "--agent",
+                OPENCLAW_AGENT_ID,
+                "--message",
+                prompt,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=int(timeout),
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+        log.warning("[OPENCLAW] CLI failed: exit %d", result.returncode)
+        return None
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        log.warning("[OPENCLAW] CLI not available or timed out")
         return None
 
 
