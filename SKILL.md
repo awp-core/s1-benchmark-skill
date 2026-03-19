@@ -141,7 +141,7 @@ Worker started
 Read the status file and present a human-friendly summary:
 
 ```bash
-cat /tmp/benchmark-worker-status.json
+cat "$STATUS_FILE"
 ```
 
 Format as:
@@ -161,8 +161,8 @@ Last action: [A#1234] valid "3211" -> OK (2 min ago)
 Check if the worker is actually doing work, not just alive:
 
 ```bash
-LAST=$(date -d "$(jq -r '.last_action_at' "$STATUS_FILE")" +%s 2>/dev/null)
-NOW=$(date +%s)
+LAST=$(date -u -d "$(jq -r '.last_action_at' "$STATUS_FILE")" +%s 2>/dev/null)
+NOW=$(date -u +%s)
 STALE=$((NOW - LAST))
 ```
 
@@ -175,7 +175,7 @@ STALE=$((NOW - LAST))
 ## Stop
 
 ```bash
-PID=$(jq -r '.pid' /tmp/benchmark-worker-status.json 2>/dev/null)
+PID=$(jq -r '.pid' "$STATUS_FILE" 2>/dev/null)
 kill "$PID" 2>/dev/null && echo "Worker stopped (PID $PID)" || echo "Worker not running"
 ```
 
