@@ -205,10 +205,29 @@ nohup python {baseDir}/scripts/benchmark-worker.py >> /tmp/benchmark-worker.log 
 | `OPENCLAW_URL` | `http://127.0.0.1:18789` | Local OpenClaw gateway |
 | `OPENCLAW_TOKEN` | _(empty)_ | Bearer token (optional) |
 | `OPENCLAW_AGENT_ID` | `main` | Agent ID header |
+| `BENCHMARK_STATUS_FILE` | `/tmp/benchmark-worker-status.json` | Status file path |
 
 The script returns structured JSON on stdout for errors:
 ```json
 {"ok": false, "error": "Wallet not initialized. Please run awp-wallet init and unlock first."}
+```
+
+### Monitoring
+
+The script writes a status file (default `/tmp/benchmark-worker-status.json`) updated after each action:
+```bash
+cat /tmp/benchmark-worker-status.json
+```
+```json
+{
+  "running": true,
+  "pid": 12345,
+  "uptime_seconds": 3600,
+  "address": "0x1234...5678",
+  "stats": {"polls": 720, "answers": 45, "questions_asked": 12, "errors": 3},
+  "last_action": "[A#1234] valid \"3211\" -> OK",
+  "last_action_at": "2026-03-20 11:00:15"
+}
 ```
 
 ## User Commands
