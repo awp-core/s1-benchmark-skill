@@ -236,15 +236,15 @@ def _detect_openclaw_endpoint() -> str:
 def call_openclaw(prompt: str, timeout: float = 120) -> str | None:
     """Call local OpenClaw and return the text output, or None.
 
-    Tries CLI fallback if HTTP endpoint fails.
+    Tries CLI first (always available), falls back to HTTP endpoint.
     """
-    # Try HTTP endpoint first
-    result = _call_openclaw_http(prompt, timeout)
+    # Try CLI first — always available, no config needed
+    result = _call_openclaw_cli(prompt, timeout)
     if result is not None:
         return result
 
-    # Fallback: try openclaw CLI
-    return _call_openclaw_cli(prompt, timeout)
+    # Fallback: try HTTP endpoint
+    return _call_openclaw_http(prompt, timeout)
 
 
 def _call_openclaw_http(prompt: str, timeout: float) -> str | None:
