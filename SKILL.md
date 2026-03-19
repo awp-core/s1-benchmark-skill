@@ -122,11 +122,18 @@ fi
 ### Step 4: Set Up Cron for Task Processing
 
 The worker writes tasks that need LLM reasoning to `/tmp/benchmark-tasks/pending/`.
-Set up a cron job to process them every minute:
+Set up a cron job to process them every minute.
+
+**Important:** Replace `YOUR_AGENT_ID` below with your actual agent ID (e.g., `main`).
+You can find it with `openclaw agents list` or use the agent ID from your current session.
 
 ```bash
+# Determine agent ID (replace if needed)
+AGENT_ID="main"
+TASK_DIR="/tmp/benchmark-tasks"
+
 # Add cron entry (idempotent — checks if already exists)
-CRON_CMD="openclaw agent --agent {agentId} --message 'Process pending benchmark tasks at {baseDir}/scripts/process-tasks.sh'"
+CRON_CMD="cd $HOME && openclaw agent --agent $AGENT_ID --message 'Check $TASK_DIR/pending/ for benchmark tasks. For each .json file: read the prompt field, solve it, write your JSON response to $TASK_DIR/done/<same_filename>. Delete stale files older than 5 min.'"
 (crontab -l 2>/dev/null | grep -v 'benchmark-tasks' ; echo "* * * * * $CRON_CMD") | crontab -
 ```
 
@@ -203,10 +210,17 @@ find "$TASK_DIR/pending" -name '*.json' -mmin +5 -delete 2>/dev/null
 
 - **Speed matters.** For answer tasks, there's a deadline (typically 3 minutes from
   assignment). Check `deadline` and `created_at` — if the deadline has passed, skip it.
+  Prioritize tasks with the nearest deadline when multiple are pending.
 - **Always write a response file**, even for tasks you're unsure about. A wrong answer
   (score 3) beats a timeout (score 0).
 - **Response format must be strict JSON.** No markdown, no explanation, just the JSON object.
 - **Process ALL pending tasks** in one invocation, not just one.
+- **Atomic writes.** Write your response to `<task_id>.tmp.json` first, then rename to
+  `<task_id>.json`. This prevents the worker from reading a partially-written file:
+  ```bash
+  echo '{"valid": true, "answer": "42"}' > "$TASK_DIR/done/${TASK_ID}.tmp.json"
+  mv "$TASK_DIR/done/${TASK_ID}.tmp.json" "$TASK_DIR/done/${TASK_ID}.json"
+  ```
 
 ---
 

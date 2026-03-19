@@ -33,7 +33,7 @@ NET_RETRY_SLEEP: int = 10  # seconds after network error
 SUSPEND_SLEEP: int = 60  # seconds when suspended
 UNLOCK_INTERVAL: int = 25 * 60  # re-unlock every 25 minutes
 ASK_EVERY_N: int = 6  # ask a question every N idle polls
-TASK_WAIT_TIMEOUT: int = 150  # max seconds to wait for agent response
+TASK_WAIT_TIMEOUT: int = 180  # max seconds to wait for agent response (> cron interval)
 TASK_POLL_INTERVAL: int = 2  # seconds between checks for agent response
 
 STATUS_FILE: str = os.environ.get(
@@ -227,14 +227,18 @@ def _wait_for_response(task_id: str, timeout: float) -> dict | None:
     while time.monotonic() < deadline and running:
         if done_path.exists():
             try:
-                data = json.loads(done_path.read_text())
+                raw = done_path.read_text()
+                # Use parse_json_response to handle markdown fences etc.
+                data = parse_json_response(raw)
+                if data is None:
+                    data = json.loads(raw)  # strict fallback
                 done_path.unlink(missing_ok=True)
-                # Also clean up the pending file
                 Path(TASK_DIR, "pending", f"{task_id}.json").unlink(missing_ok=True)
                 log.info("[TASK] got response for %s", task_id)
                 return data
             except (json.JSONDecodeError, OSError) as e:
                 log.warning("[TASK] failed to read response %s: %s", task_id, e)
+                done_path.unlink(missing_ok=True)
                 return None
         time.sleep(TASK_POLL_INTERVAL)
     # Timeout — clean up pending file

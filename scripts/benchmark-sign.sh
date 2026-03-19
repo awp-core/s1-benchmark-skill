@@ -26,7 +26,10 @@ if [ -z "${AWP_SESSION_TOKEN:-}" ]; then
   # Try "sessionToken" first (newer awp-wallet), then "token" (older versions)
   AWP_SESSION_TOKEN=$(echo "$UNLOCK_OUT" \
     | grep -oE '"(sessionToken|token)"\s*:\s*"[^"]*"' | head -1 | sed 's/.*:.*"\(.*\)"/\1/')
-  [ -z "$AWP_SESSION_TOKEN" ] && AWP_SESSION_TOKEN="$UNLOCK_OUT"
+  if [ -z "$AWP_SESSION_TOKEN" ]; then
+    echo '{"ok":false,"error":"failed to unlock wallet — no session token"}' >&2
+    exit 1
+  fi
   export AWP_SESSION_TOKEN
 fi
 
