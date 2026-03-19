@@ -35,6 +35,9 @@ NET_RETRY_SLEEP: int = 10  # seconds after network error
 SUSPEND_SLEEP: int = 60  # seconds when suspended
 UNLOCK_INTERVAL: int = 25 * 60  # re-unlock every 25 minutes
 ASK_EVERY_N: int = 6  # ask a question every N idle polls
+STATUS_FILE: str = os.environ.get(
+    "BENCHMARK_STATUS_FILE", "/tmp/benchmark-worker-status.json"
+)
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -69,6 +72,48 @@ signal.signal(signal.SIGTERM, _shutdown)
 # ---------------------------------------------------------------------------
 
 sub_env: dict[str, str] = {**os.environ}
+
+# ---------------------------------------------------------------------------
+# Status tracking
+# ---------------------------------------------------------------------------
+
+_start_time: float = time.monotonic()
+_stats: dict[str, int] = {
+    "polls": 0,
+    "answers": 0,
+    "questions_asked": 0,
+    "errors": 0,
+}
+_last_action: str = ""
+_last_action_at: str = ""
+_worker_address: str = ""
+
+
+def _write_status() -> None:
+    """Write current worker status to a JSON file for external monitoring."""
+    status = {
+        "running": running,
+        "pid": os.getpid(),
+        "uptime_seconds": int(time.monotonic() - _start_time),
+        "address": _worker_address,
+        "stats": {**_stats},
+        "last_action": _last_action,
+        "last_action_at": _last_action_at,
+    }
+    try:
+        tmp = STATUS_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(status, f, indent=2)
+        os.replace(tmp, STATUS_FILE)
+    except OSError as e:
+        log.warning("[STATUS] failed to write status file: %s", e)
+
+
+def _record_action(action: str) -> None:
+    """Record the latest action for status reporting."""
+    global _last_action, _last_action_at
+    _last_action = action
+    _last_action_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def get_wallet_address() -> str | None:
@@ -354,7 +399,13 @@ def _handle_answer(assigned: dict) -> None:
     except json.JSONDecodeError:
         status = "ERR"
     validity = "valid" if valid else "invalid"
-    log.info('[A#%s] %s "%s" -> %s', qid, validity, answer[:40], status)
+    action = f'[A#{qid}] {validity} "{answer[:40]}" -> {status}'
+    log.info("%s", action)
+    _stats["answers"] += 1
+    if status == "ERR":
+        _stats["errors"] += 1
+    _record_action(action)
+    _write_status()
 
 
 def _handle_ask() -> None:
@@ -409,11 +460,17 @@ def _handle_ask() -> None:
         rdata = json.loads(result)
         if rdata.get("ok"):
             new_id = rdata.get("data", {}).get("question_id", "?")
-            log.info("[ASK] ok #%s", new_id)
+            action = f"[ASK] ok #{new_id}"
+            log.info("%s", action)
+            _stats["questions_asked"] += 1
+            _record_action(action)
         else:
             log.warning("[ASK] err: %s", rdata.get("error", "unknown"))
+            _stats["errors"] += 1
     except json.JSONDecodeError:
         log.warning("[ASK] err: invalid response")
+        _stats["errors"] += 1
+    _write_status()
 
 
 # ---------------------------------------------------------------------------
@@ -437,6 +494,7 @@ def run_loop() -> None:
 
         # -- Poll -------------------------------------------------------------
         raw = signed_request("GET", "/api/v1/poll")
+        _stats["polls"] += 1
         if not running:
             break
 
@@ -487,6 +545,8 @@ def run_loop() -> None:
         _interruptible_sleep(POLL_SLEEP)
 
     log.info("[EXIT] worker stopped")
+    _record_action("[EXIT] worker stopped")
+    _write_status()
 
 
 # ---------------------------------------------------------------------------
@@ -509,6 +569,8 @@ def main() -> None:
         )
         sys.exit(1)
 
+    global _worker_address
+    _worker_address = address
     sub_env["WALLET_ADDRESS"] = address
     sub_env["BENCHMARK_API_URL"] = BENCHMARK_API_URL
 
@@ -541,7 +603,9 @@ def main() -> None:
     log.info("[SETUP] wallet %s | api connected | ready", short_addr)
     print(json.dumps({"ok": True, "message": "worker started", "address": address}))
 
-    # 4. Main loop
+    # 4. Write initial status and start main loop
+    _record_action("[SETUP] ready")
+    _write_status()
     run_loop()
 
 
