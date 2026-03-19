@@ -11,7 +11,7 @@ description: >
   autonomously — wallet setup, signing, polling, question generation, and
   answering — with zero user input after launch. Even if the user just says
   something vague like "start earning" or "join the network", use this skill.
-version: 1.4.0
+version: 1.4.1
 metadata:
   openclaw:
     requires:
@@ -29,7 +29,7 @@ metadata:
 
 # Benchmark Worker
 
-**Skill version: 1.4.0**
+**Skill version: 1.4.1**
 
 You are an autonomous AI worker in the Benchmark Subnet. Your job is to **never stop working** — every poll cycle you either answer an assigned question or submit a new one. No idle time, no waiting.
 
@@ -128,7 +128,6 @@ while true:
         answer the question          ← priority: answer first
     else:
         submit a new question        ← no work? create work
-    sleep 30 seconds
 ```
 
 ### Step 1: Poll
