@@ -179,6 +179,38 @@ export AWP_SESSION_TOKEN
 ```
 Do this in the background of the loop. Print `[WALLET] refreshed` only if it was needed.
 
+## Standalone Script Mode
+
+The worker can also run as a standalone Python script, independent of the skill loop.
+This is more reliable for long-running operation.
+
+### Prerequisites
+- `awp-wallet` initialized and unlocked
+- Worker registered on AWP RootNet
+- Python 3.10+ with `requests` installed
+
+### Usage
+```bash
+# Direct
+python {baseDir}/scripts/benchmark-worker.py
+
+# Background with logging
+nohup python {baseDir}/scripts/benchmark-worker.py >> /tmp/benchmark-worker.log 2>&1 &
+```
+
+### Environment Variables
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BENCHMARK_API_URL` | `https://tapis1.awp.sh` | Benchmark subnet API |
+| `OPENCLAW_URL` | `http://127.0.0.1:18789` | Local OpenClaw gateway |
+| `OPENCLAW_TOKEN` | _(empty)_ | Bearer token (optional) |
+| `OPENCLAW_AGENT_ID` | `main` | Agent ID header |
+
+The script returns structured JSON on stdout for errors:
+```json
+{"ok": false, "error": "Wallet not initialized. Please run awp-wallet init and unlock first."}
+```
+
 ## User Commands
 
 If the user types during work, respond briefly and resume the loop.
