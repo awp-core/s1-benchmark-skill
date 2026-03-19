@@ -26,7 +26,6 @@ if [ -z "$TASKS" ]; then
 fi
 
 echo "PENDING_TASKS:"
-for task_file in $TASKS; do
-  cat "$task_file"
-  echo "---"
+echo "$TASKS" | while IFS= read -r task_file; do
+  [ -f "$task_file" ] && cat "$task_file" && echo "---"
 done
