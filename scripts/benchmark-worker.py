@@ -236,26 +236,82 @@ def _detect_openclaw_endpoint() -> str:
 def call_openclaw(prompt: str, timeout: float = 120) -> str | None:
     """Call local OpenClaw and return the text output, or None.
 
-    Tries CLI first (always available), falls back to HTTP endpoint.
+    Priority: CLI via RPC → CLI --local → HTTP endpoint.
     """
-    # Try CLI first — always available, no config needed
-    result = _call_openclaw_cli(prompt, timeout)
+    # 1. CLI via running gateway RPC (no HTTP, always enabled)
+    result = _call_openclaw_cli(prompt, timeout, local=False)
     if result is not None:
         return result
 
-    # Fallback: try HTTP endpoint
+    # 2. CLI with embedded gateway (--local)
+    result = _call_openclaw_cli(prompt, timeout, local=True)
+    if result is not None:
+        return result
+
+    # 3. HTTP endpoint (needs gateway.http.endpoints config)
     return _call_openclaw_http(prompt, timeout)
 
 
+def _call_openclaw_cli(prompt: str, timeout: float, *, local: bool) -> str | None:
+    """Call OpenClaw via CLI.
+
+    Without --local: connects to running gateway via WebSocket RPC (preferred).
+    With --local: starts embedded gateway in-process.
+    """
+    cmd = [
+        "openclaw",
+        "agent",
+        "--agent",
+        OPENCLAW_AGENT_ID,
+        "--message",
+        prompt,
+        "--timeout",
+        str(int(timeout)),
+    ]
+    if local:
+        cmd.append("--local")
+
+    mode = "local" if local else "rpc"
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=int(timeout) + 10,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            # Try JSON parse first
+            try:
+                data = json.loads(result.stdout)
+                text = extract_text_from_response(data)
+                if text:
+                    return text
+            except json.JSONDecodeError:
+                pass
+            # Plain text output
+            return result.stdout.strip()
+        if result.stderr.strip():
+            log.warning(
+                "[OPENCLAW] CLI(%s) stderr: %s", mode, result.stderr.strip()[:200]
+            )
+        log.warning("[OPENCLAW] CLI(%s) failed: exit %d", mode, result.returncode)
+        return None
+    except subprocess.TimeoutExpired:
+        log.warning("[OPENCLAW] CLI(%s) timed out after %ds", mode, int(timeout))
+        return None
+    except FileNotFoundError:
+        log.warning("[OPENCLAW] 'openclaw' command not found")
+        return None
+
+
 def _call_openclaw_http(prompt: str, timeout: float) -> str | None:
-    """Call OpenClaw via HTTP API."""
+    """Call OpenClaw via HTTP API (fallback, needs endpoints enabled in config)."""
     endpoint = _detect_openclaw_endpoint()
     headers: dict[str, str] = {"Content-Type": "application/json"}
     if OPENCLAW_TOKEN:
         headers["Authorization"] = f"Bearer {OPENCLAW_TOKEN}"
     headers["x-openclaw-agent-id"] = OPENCLAW_AGENT_ID
 
-    # Build payload based on endpoint type
     if "chat/completions" in endpoint:
         payload: dict = {
             "model": f"openclaw:{OPENCLAW_AGENT_ID}",
@@ -275,49 +331,6 @@ def _call_openclaw_http(prompt: str, timeout: float) -> str | None:
         return extract_text_from_response(resp.json())
     except requests.RequestException as e:
         log.warning("[OPENCLAW] HTTP request failed: %s", e)
-        return None
-
-
-def _call_openclaw_cli(prompt: str, timeout: float) -> str | None:
-    """Call OpenClaw via CLI (preferred method, always available)."""
-    try:
-        result = subprocess.run(
-            [
-                "openclaw",
-                "agent",
-                "--agent",
-                OPENCLAW_AGENT_ID,
-                "--message",
-                prompt,
-                "--local",  # use embedded gateway, no running service needed
-                "--json",  # machine-readable output
-                "--timeout",
-                str(int(timeout)),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=int(timeout) + 10,  # extra buffer beyond openclaw's own timeout
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            # --json output: try to extract text from JSON response
-            try:
-                data = json.loads(result.stdout)
-                text = extract_text_from_response(data)
-                if text:
-                    return text
-            except json.JSONDecodeError:
-                pass
-            # Plain text output
-            return result.stdout.strip()
-        if result.stderr.strip():
-            log.warning("[OPENCLAW] CLI stderr: %s", result.stderr.strip()[:200])
-        log.warning("[OPENCLAW] CLI failed: exit %d", result.returncode)
-        return None
-    except subprocess.TimeoutExpired:
-        log.warning("[OPENCLAW] CLI timed out after %ds", int(timeout))
-        return None
-    except FileNotFoundError:
-        log.warning("[OPENCLAW] 'openclaw' command not found")
         return None
 
 
