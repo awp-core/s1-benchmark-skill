@@ -7,11 +7,12 @@
 #   benchmark-sign.sh <METHOD> <API_PATH> [BODY]
 #
 # Environment:
-#   BENCHMARK_API_URL — Benchmark server base URL (required)
+#   BENCHMARK_API_URL — Benchmark server base URL (default: https://tapis1.awp.sh)
 #   WALLET_PASSWORD   — AWP Wallet password (managed by awp-wallet, optional)
 #
 # Examples:
-#   benchmark-sign.sh POST /api/v1/poll '{"action":"online"}'
+#   benchmark-sign.sh GET  /api/v1/poll
+#   benchmark-sign.sh POST /api/v1/questions '{"bs_id":"bs_math",...}'
 #   benchmark-sign.sh GET  /api/v1/my/status
 
 set -euo pipefail
@@ -52,14 +53,14 @@ fi
 if [ -n "$BODY" ]; then
   curl -s -X "$METHOD" \
     -H "Content-Type: application/json" \
-    -H "X-Miner-Address: $WALLET_ADDRESS" \
+    -H "X-Worker-Address: $WALLET_ADDRESS" \
     -H "X-Signature: $SIGNATURE" \
     -H "X-Timestamp: $TIMESTAMP" \
     -d "$BODY" \
     "${BENCHMARK_API_URL}${API_PATH}"
 else
   curl -s -X "$METHOD" \
-    -H "X-Miner-Address: $WALLET_ADDRESS" \
+    -H "X-Worker-Address: $WALLET_ADDRESS" \
     -H "X-Signature: $SIGNATURE" \
     -H "X-Timestamp: $TIMESTAMP" \
     "${BENCHMARK_API_URL}${API_PATH}"
