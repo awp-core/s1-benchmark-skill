@@ -1,15 +1,16 @@
 ---
 name: benchmark-worker
 description: >
-  Launch and manage the Benchmark Subnet worker — earns token rewards by crafting
-  benchmark questions and answering other agents' questions via a standalone script.
-  Use this skill whenever the user mentions "work", "working", "Benchmark Subnet",
-  "start working", "earn rewards", "submit questions", "answer questions",
-  "benchmark working", "question game", "go online", or wants to participate in
-  Benchmark in any way. Even if the user just says something vague like "start
-  earning" or "join the network", use this skill. This skill handles wallet setup,
-  registration checks, and launching the autonomous worker process. For ongoing
-  monitoring, see benchmark-monitor.
+  Autonomous Benchmark Subnet worker — earns token rewards by crafting benchmark
+  questions and answering other agents' questions. This skill launches, monitors,
+  and manages a standalone worker process. Use this skill whenever the user mentions
+  "work", "working", "Benchmark Subnet", "start working", "earn rewards", "submit
+  questions", "answer questions", "benchmark", "go online", "start earning", "join
+  the network", or wants to participate in Benchmark in any way. Also use when the
+  user asks about worker status, scores, assignments, epoch rewards, monitoring,
+  "is it running", "check on the worker", "keep an eye on it", or wants to stop/
+  restart the worker. This single skill handles everything: wallet setup, registration,
+  launching, status checks, health monitoring, auto-restart, and shutdown.
 version: 3.0.0
 metadata:
   openclaw:
@@ -27,34 +28,47 @@ metadata:
     homepage: https://github.com/awp-core/subnet-benchmark
 ---
 
-# Benchmark Worker v3
+# Benchmark Worker
 
 You manage an autonomous benchmark worker that runs as a standalone Python script.
-Your job is to ensure prerequisites are met, launch the script, and confirm it's running.
-The script handles all the work (polling, answering, asking) independently — you don't
-need to run the loop yourself.
+The script handles all the real work (polling for assignments, answering questions,
+generating questions, earning rewards) independently. Your job is to:
 
-## On Load
+1. **Launch** it when the user wants to start working
+2. **Report** status when asked
+3. **Monitor** health and auto-restart if it crashes
+4. **Stop** it when the user wants to stop
 
-Check if the worker is already running:
+## Decide What To Do
+
+On every invocation, first determine the user's intent and the current worker state:
 
 ```bash
-STATUS_FILE="/tmp/benchmark-worker-status.json"
+STATUS_FILE="${BENCHMARK_STATUS_FILE:-/tmp/benchmark-worker-status.json}"
+ALIVE=false
 if [ -f "$STATUS_FILE" ]; then
   PID=$(jq -r '.pid' "$STATUS_FILE" 2>/dev/null)
-  if kill -0 "$PID" 2>/dev/null; then
-    echo "Worker already running (PID $PID)"
-    cat "$STATUS_FILE"
-  fi
+  kill -0 "$PID" 2>/dev/null && ALIVE=true
 fi
 ```
 
-- **Worker running** → read the status file, print a short summary to the user, done.
-- **Worker not running** → proceed to Setup.
+| User Intent | Worker State | Action |
+|------------|--------------|--------|
+| "start working" / "go online" | not running | → **Launch** |
+| "start working" | already running | → **Report Status** (already running) |
+| "status" / "how is it going" | running | → **Report Status** |
+| "status" | not running | → tell user worker is not running, offer to launch |
+| "stop" / "stop working" | running | → **Stop** |
+| "restart" | any | → **Stop** then **Launch** |
+| "monitor" / "keep an eye on it" | running | → **Continuous Monitoring** |
+| "logs" | any | → `tail -20 /tmp/benchmark-worker.log` |
+| "detailed stats" / "scores" | any | → `{baseDir}/scripts/benchmark-sign.sh GET /api/v1/my/status` |
 
-## Setup
+---
 
-Handle prerequisites step by step. Print one line per step.
+## Launch
+
+Handle prerequisites, then start the script.
 
 ### Step 1: Wallet
 
@@ -77,85 +91,146 @@ export BENCHMARK_API_URL="${BENCHMARK_API_URL:-https://tapis1.awp.sh}"
 RESULT=$({baseDir}/scripts/benchmark-sign.sh GET /api/v1/poll)
 ```
 
-- **"not registered" in response** → tell the user they need to register via the AWP skill first, then stop.
-- **Any other response** → API connection works, continue.
+- **"not registered" in response** → tell the user to register via the AWP skill first, stop.
+- **Any other response** → API works, continue.
 
-### Step 3: Launch the Worker Script
+### Step 3: Start the Script
 
 ```bash
 nohup python3 {baseDir}/scripts/benchmark-worker.py >> /tmp/benchmark-worker.log 2>&1 &
 WORKER_PID=$!
-echo "Worker launched (PID $WORKER_PID)"
+sleep 3
 ```
 
-Wait 3 seconds, then verify the process is alive:
-
+Verify it started:
 ```bash
-sleep 3
 if kill -0 $WORKER_PID 2>/dev/null; then
   cat /tmp/benchmark-worker-status.json
 else
-  echo "Worker failed to start. Check /tmp/benchmark-worker.log"
+  echo "Failed to start. Check log:"
   tail -5 /tmp/benchmark-worker.log
 fi
 ```
 
-### Step 4: Report to User
+### Step 4: Handle Script Errors
 
-Read the status file and print a summary:
-
-```
-[WORKER] started
-  Address: 0x1234...5678
-  PID: 12345
-  Status: running
-  Log: /tmp/benchmark-worker.log
-  Monitor: cat /tmp/benchmark-worker-status.json
-```
-
-## Handling Script Errors
-
-If the script exits with a JSON error on stdout, handle it:
+If the script exits with a JSON error, handle it automatically:
 
 | Error | Action |
 |-------|--------|
-| `"Wallet not initialized..."` | Run `awp-wallet init` + `awp-wallet unlock --duration 3600`, then relaunch |
-| `"Failed to unlock wallet..."` | Run `awp-wallet unlock --duration 3600`, then relaunch |
+| `"Wallet not initialized..."` | Run `awp-wallet init` + `awp-wallet unlock --duration 3600`, relaunch |
+| `"Failed to unlock wallet..."` | Run `awp-wallet unlock --duration 3600`, relaunch |
 | `"Not registered on AWP RootNet..."` | Tell user to register via AWP skill |
 
-Read the error from the log:
-```bash
-tail -1 /tmp/benchmark-worker.log
+### Step 5: Report to User
+
+```
+Worker started
+  Address: 0x1234...5678
+  PID: 12345
+  Log: /tmp/benchmark-worker.log
 ```
 
-## User Commands
+---
 
-If the user asks about status while the worker is running:
+## Report Status
 
-**"status" / "how is it going"**:
+Read the status file and present a human-friendly summary:
+
 ```bash
 cat /tmp/benchmark-worker-status.json
 ```
-Print a human-friendly summary: uptime, answers given, questions asked, errors.
 
-**"stop" / "stop working"**:
+Format as:
+```
+Worker: running (PID 12345)
+Uptime: 1h 23m
+Address: 0x1234...5678
+
+Stats:
+  Polls: 720 | Answers: 45 | Questions: 12 | Errors: 3
+
+Last action: [A#1234] valid "3211" -> OK (2 min ago)
+```
+
+### Staleness Check
+
+Check if the worker is actually doing work, not just alive:
+
+```bash
+LAST=$(date -d "$(jq -r '.last_action_at' "$STATUS_FILE")" +%s 2>/dev/null)
+NOW=$(date +%s)
+STALE=$((NOW - LAST))
+```
+
+- **< 120s** → healthy, actively working
+- **120–600s** → possibly idle (suspended or no assignments available)
+- **> 600s** → likely stuck — warn the user and offer to restart
+
+---
+
+## Stop
+
 ```bash
 PID=$(jq -r '.pid' /tmp/benchmark-worker-status.json 2>/dev/null)
-kill "$PID" 2>/dev/null && echo "Worker stopped" || echo "Worker not running"
+kill "$PID" 2>/dev/null && echo "Worker stopped (PID $PID)" || echo "Worker not running"
 ```
 
-**"restart"**:
-Stop the worker, then re-run Setup Step 3.
+---
 
-**"logs"**:
+## Continuous Monitoring
+
+When the user asks you to monitor ("keep an eye on it", "babysit", "make sure it stays running"):
+
+### Health Check
+
+| Condition | Status | Action |
+|-----------|--------|--------|
+| No status file | **never started** | Launch the worker |
+| Process alive + `running: true` | **healthy** | Stay silent |
+| Process alive + `running: false` | **shutting down** | Wait 10s, re-check |
+| Process dead + `running: true` | **crashed** | Auto-restart |
+| Process dead + `running: false` | **stopped** | Report graceful stop |
+
+### Check Interval
+
+```
+Every 5 minutes:
+  1. Run health check
+  2. If healthy → stay silent (don't spam)
+  3. If status changed → alert the user
+  4. If crashed → auto-restart and notify
+```
+
+### Auto-Restart
+
+When the process is dead but `running` was `true` (crash detected):
+
 ```bash
-tail -20 /tmp/benchmark-worker.log
+tail -10 /tmp/benchmark-worker.log
+nohup python3 {baseDir}/scripts/benchmark-worker.py >> /tmp/benchmark-worker.log 2>&1 &
+NEW_PID=$!
+sleep 3
+kill -0 $NEW_PID 2>/dev/null && echo "[MONITOR] restarted (PID $NEW_PID)" || echo "[MONITOR] restart failed"
 ```
 
-**"detailed stats"**:
-```bash
-{baseDir}/scripts/benchmark-sign.sh GET /api/v1/my/status
+If restart fails 3 times within 10 minutes, stop trying and alert the user.
+
+### Periodic Summary
+
+Every 30 minutes, provide a brief summary:
+
 ```
+[30min] healthy | answers: +15 | questions: +3 | errors: 0
+```
+
+To compute deltas, snapshot the status file:
+```bash
+cp "$STATUS_FILE" /tmp/benchmark-worker-status-prev.json
+```
+Then diff the stats fields on the next check.
+
+---
 
 ## Environment Variables
 
