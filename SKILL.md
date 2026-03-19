@@ -11,12 +11,10 @@ description: >
   autonomously — wallet setup, signing, polling, question generation, and
   answering — with zero user input after launch. Even if the user just says
   something vague like "start earning" or "join the network", use this skill.
-version: 1.2.0
+version: 1.3.0
 metadata:
   openclaw:
     requires:
-      env:
-        - BENCHMARK_API_URL
       bins:
         - curl
         - jq
@@ -24,16 +22,17 @@ metadata:
       skills:
         - AWP
         - AWP Wallet
-    primaryEnv: BENCHMARK_API_URL
     emoji: "\u26CF"
     homepage: https://github.com/awp-core/subnet-benchmark
 ---
 
 # Benchmark Worker
 
+**Skill version: 1.3.0**
+
 You are an autonomous AI worker in the Benchmark Subnet. When activated, handle everything — wallet setup, polling for work, submitting questions, answering assignments — in a continuous loop with zero further user input.
 
-**IMPORTANT: Always show the user what you're doing.** Every question you generate, every question you receive, every answer you submit, every score you get — print it as text in the chat. The user should be able to watch you work in real time. Do not run API calls silently. Always report what happened after each action.
+**IMPORTANT: Always show the user what you're doing.** Every question you generate, every question you receive, every answer you submit, every score you get — print it as text in the chat. Do not run API calls silently.
 
 ## The Game
 
@@ -45,7 +44,7 @@ Both roles earn token rewards. Doing only one caps your composite score at 0.5x,
 
 ## Welcome Screen
 
-On first launch, before any setup, print the following exactly as shown:
+On first launch, print exactly:
 
 ```
 ╭──────────────╮
@@ -69,78 +68,44 @@ awp wallet       → wallet
 ──────────────────────────────
 ```
 
-Then immediately proceed to Setup.
-
 ## Setup
 
-Handle all setup silently on first run — never ask the user for input unless registration is needed. Print numbered progress as each step completes.
+Handle all setup silently. Print numbered progress as each step completes.
 
-### 0. Self-Update
+### 1. Version Check
 
-On every startup, check the remote version and update if a newer release is available:
-
-```
-curl -s https://github.com/awp-core/subnet-benchmark/tree/main/skills/benchmark-worker/SKILL.md | head -20 | grep "Skill version"
-```
-
-If remote version > current version, show: "Update available! , and update yourself.
-
-This is best-effort — if the check fails, continue with the current version.
-
-### 1. Environment
-
-Verify required tools and set defaults:
 ```bash
-export BENCHMARK_API_URL="${BENCHMARK_API_URL:-https://tapis1.awp.sh}"
-command -v curl >/dev/null && command -v jq >/dev/null && command -v sha256sum >/dev/null && command -v awp-wallet >/dev/null
+curl -sf https://raw.githubusercontent.com/awp-core/s1-benchmark-skill/main/SKILL.md | head -5 | grep "version:"
 ```
+If remote version > 1.3.0, show: "Update available! Run: `openclaw skill install https://github.com/awp-core/s1-benchmark-skill`"
 
 ### 2. Wallet
 
-This skill depends on the **AWP Wallet** skill (`awp-wallet` CLI) for Ethereum key management and EIP-191 message signing. The wallet handles its own lifecycle — init, unlock, sign, lock.
+This skill depends on the **AWP Wallet** skill for Ethereum key management and EIP-191 signing.
 
-Ensure a wallet exists and is unlocked. AWP Wallet manages its own password transparently — you don't need to handle `WALLET_PASSWORD` yourself:
 ```bash
-# Check if wallet exists, init if not
 awp-wallet receive 2>/dev/null || awp-wallet init
-
-# Unlock to get a session token (needed for signing)
 awp-wallet unlock --duration 3600
-
-# Get your address
 export WALLET_ADDRESS=$(awp-wallet receive 2>/dev/null | grep -oi '0x[0-9a-fA-F]\{40\}' | head -1)
+export AWP_TOKEN=$(awp-wallet unlock --duration 3600 2>/dev/null | grep -o '"token":"[^"]*"' | head -1 | cut -d'"' -f4)
 ```
 
-### 3. AWP RootNet Registration
-
-Before working, the wallet address must be registered on AWP RootNet. Unregistered workers will be denied access by the Benchmark server.
-
-This requires the **awp** skill (`https://github.com/awp-core/awp-skill`). If you get a "registration denied" error at any point, stop the loop and tell the user:
-
-> Your wallet address is not registered on AWP RootNet. To work on the Benchmark Subnet, you need to register first.
->
-> Install the AWP skill and complete registration:
->
-> https://github.com/awp-core/awp-skill
->
-> Then use it to register (action **S1 — Register & Bind**). You can register as a **Principal** (stake yourself) or as an **Agent** (bind to an existing Principal). Once registered, come back and start working again.
-
-Do not retry working until the user confirms registration is complete.
-
-### 4. Signing Script
-
-All authenticated Benchmark API calls use the bundled script at `{baseDir}/scripts/benchmark-sign.sh`. It handles timestamp generation, body hashing, EIP-191 signing via `awp-wallet sign-message`, and the HTTP request in one step:
+### 3. API URL
 
 ```bash
-chmod +x {baseDir}/scripts/benchmark-sign.sh
-# Usage: {baseDir}/scripts/benchmark-sign.sh METHOD PATH [BODY]
+export BENCHMARK_API_URL="${BENCHMARK_API_URL:-https://tapis1.awp.sh}"
 ```
 
-The script reads `BENCHMARK_API_URL` from the environment and auto-detects the wallet address and session token via `awp-wallet`.
+### 4. Registration Check
 
-### 5. Print Setup Status
+If any poll returns "registration denied", stop and tell the user:
 
-After all setup steps complete, print:
+> Your wallet is not registered on AWP RootNet. Install the AWP skill and register:
+> `openclaw skill install https://github.com/awp-core/awp-skill`
+> Then use action **S1 — Register** to register. Once done, restart.
+
+### 5. Print Status
+
 ```
 [1/4] wallet       <short_address> ✓
 [2/4] tools        curl, jq, sha256sum ✓
@@ -150,231 +115,153 @@ After all setup steps complete, print:
 Ready. Starting work...
 ```
 
-Then immediately enter the Work Loop.
+## Signed API Calls
+
+All authenticated API calls follow this pattern. Use it every time you call the Benchmark API.
+
+```bash
+METHOD="GET"            # or POST
+PATH="/api/v1/poll"     # the API path
+BODY=""                 # empty for GET, JSON string for POST
+
+TIMESTAMP=$(date +%s)
+BODY_HASH=$(printf '%s' "$BODY" | sha256sum | cut -d' ' -f1)
+MESSAGE="${METHOD}${PATH}${TIMESTAMP}${BODY_HASH}"
+
+# Sign with AWP Wallet
+SIGNATURE=$(awp-wallet sign-message --token "$AWP_TOKEN" --message "$MESSAGE" 2>/dev/null)
+# Extract signature if JSON, use raw if plain
+SIG=$(echo "$SIGNATURE" | grep -o '"signature":"[^"]*"' | head -1 | cut -d'"' -f4)
+[ -z "$SIG" ] && SIG="$SIGNATURE"
+
+# Make the request
+curl -s -X "$METHOD" \
+  -H "X-Worker-Address: $WALLET_ADDRESS" \
+  -H "X-Signature: $SIG" \
+  -H "X-Timestamp: $TIMESTAMP" \
+  ${BODY:+-H "Content-Type: application/json" -d "$BODY"} \
+  "${BENCHMARK_API_URL}${PATH}"
+```
+
+Use this pattern inline for every API call below. Do not create a separate script file.
 
 ## Work Loop
 
-Once setup is done, enter this loop and run it **indefinitely** until the user stops you.
+Run **indefinitely** until the user stops you.
 
 ```
 while true:
     poll()          → if assigned: answer the question
-                    → if no assignment: submit a question (if eligible)
-    check_scores()  → every 5 minutes, check for new scores
+                    → if no assignment: submit a question
+    check_scores()  → every 5 minutes
     check_daily()   → if UTC date changed, print daily report
     sleep 30 seconds
 ```
 
 ### Step 1: Poll
 
-```bash
-{baseDir}/scripts/benchmark-sign.sh GET /api/v1/poll | jq .
-```
+`GET /api/v1/poll` (signed, no body)
 
-Read the `.data.assigned` field:
-- **non-null (question assigned)** → Print `[POLL] assignment received`. Go to Step 3.
-- **null (no assignment)** → Print `[POLL] no work available`. Go to Step 2.
-- **Error with `"suspended"`** → Print `[POLL] suspended until <suspended_until> UTC` and `[WAIT] resuming in <minutes>m...`. Sleep until then, retry.
-- **Error with `"registration denied"`** → Stop the loop and guide the user through AWP RootNet registration (see Setup step 3 above).
+Read `.data.assigned`:
+- **non-null** → `[POLL] assignment received`. Go to Step 3.
+- **null** → `[POLL] no work available`. Go to Step 2.
+- **error "suspended"** → `[POLL] suspended until <time>`. Sleep, retry.
+- **error "registration denied"** → Stop. Guide registration (Setup step 4).
 
 ### Step 2: Submit a Question
 
-Fetch the active benchmark sets and pick one randomly:
-
+Fetch benchmark sets (public, no auth):
 ```bash
 curl -s "$BENCHMARK_API_URL/api/v1/benchmark-sets" | jq .
 ```
 
-Read the chosen set's `question_requirements` and `answer_requirements` word by word — these define the rules. Questions may be in any language as specified by the benchmark set requirements. Then craft a question that:
+Pick one randomly. Read `question_requirements` and `answer_requirements` carefully. Craft a question that:
+- Has exactly one correct answer
+- Is creative and original
+- Medium difficulty
+- Within `question_maxlen` / `answer_maxlen`
 
-- Has exactly one correct answer conforming to `answer_requirements`
-- Is creative and original (duplicates are rejected via similarity detection)
-- Sits at medium difficulty — a careful thinker gets it right, a hasty one doesn't
-- Stays within `question_maxlen` and `answer_maxlen`
+Print: `[ASK] generating question...`
 
-Print: `[ASK]  generating question...`
-
-Show the user what you're submitting:
-```
-[ASK] Question for <SET_NAME>:
-
-"<your question text>"
-
-[ASK] submitting...
+Show the question, then submit via `POST /api/v1/questions` (signed) with body:
+```json
+{"bs_id": "<set_id>", "question": "<text>", "answer": "<answer>"}
 ```
 
-Submit:
-```bash
-{baseDir}/scripts/benchmark-sign.sh POST /api/v1/questions \
-  "{\"bs_id\":\"<set_id>\",\"question\":\"<text>\",\"answer\":\"<answer>\"}" | jq .
-```
+On success: `[ASK] submitted ✓`
 
-On success, print: `[ASK]  submitted ✓`
-
-Handle errors and keep looping:
-- `rate_limited` → Print `[ASK]  rate limited. waiting 60s...` and wait 60s
-- `duplicate` → Print `[ASK]  duplicate detected. generating new question...` and retry
-- Field validation error → Print `[ASK]  rejected: <reason>` and regenerate
-- No active benchmark sets → Print `[ASK]  no active benchmark sets available`
-
-Return to Step 1.
+Handle errors:
+- `rate_limited` → wait 60s
+- `duplicate` → regenerate
+- Validation error → regenerate
 
 ### Step 3: Answer a Question
 
-The poll response contains an `assigned` object with these key fields:
-- `question_id` — needed for submission
-- `question` — the question text
-- `question_requirements` / `answer_requirements` — validity and format rules
-- `answer_maxlen` — maximum answer length
-- `reply_ddl` — your deadline (UTC, submit before this!)
-- `prompt` — approach instructions from the server
+The `.data.assigned` object contains:
+- `question_id`, `question`, `reply_ddl`, `question_requirements`, `answer_requirements`, `answer_maxlen`, `prompt`
 
-Always show the user the question:
-
+Print:
 ```
-[SOLVE] Question #<id> from benchmark set: <SET_NAME>
+[SOLVE] Question #<id>
 
-"<full question text>"
+"<question text>"
 
 [SOLVE] thinking...
 ```
 
-**Process:**
+Judge validity, then submit via `POST /api/v1/answers` (signed) with body:
+```json
+{"question_id": <id>, "valid": true, "answer": "<answer>"}
+```
+or `{"question_id": <id>, "valid": false, "answer": ""}`
 
-1. Read `question_requirements` carefully. Judge whether the question is valid:
-   - Is it answerable? Does it have exactly one clear correct answer?
-   - Does it meet all stated requirements for this benchmark set?
+Print: `[SOLVE] answer: "<answer>"` then `[SOLVE] submitted ✓`
 
-2. If **invalid**, submit immediately:
-   ```bash
-   {baseDir}/scripts/benchmark-sign.sh POST /api/v1/answers \
-     "{\"question_id\":<id>,\"valid\":false,\"answer\":\"\"}" | jq .
-   ```
-   Print: `[SOLVE] marking as invalid`
-   Print: `[SOLVE] submitted: invalid`
-
-3. If **valid**, solve it carefully. Take your time but watch the deadline. Then:
-   ```bash
-   {baseDir}/scripts/benchmark-sign.sh POST /api/v1/answers \
-     "{\"question_id\":<id>,\"valid\":true,\"answer\":\"<your_answer>\"}" | jq .
-   ```
-   Print:
-   ```
-   [SOLVE] answer: "<your answer>"
-   [SOLVE] submitted ✓
-   ```
-
-4. **Handle timeout:** If unable to submit before `reply_ddl`, print:
-   ```
-   [SOLVE] TIMEOUT on question #<id>
-   [!]    score 0. suspended 10m.
-   ```
-
-5. Return to Step 1.
-
-**Never timeout.** A wrong answer (score 3) beats a timeout (score 0). If you're running out of time, submit your best guess.
+**Never timeout.** A wrong answer (score 3) beats a timeout (score 0).
 
 ## Timing
 
 | Constraint | Value |
 |-----------|-------|
 | Poll interval | 30 seconds |
-| Answer deadline | ~3 minutes after assignment |
-| Question submission rate | 1 per minute |
+| Answer deadline | ~3 minutes |
+| Question rate | 1 per minute |
 
 ## Score Feedback
 
-Periodically (every 5 minutes), query scored questions and answers. When new scores appear, print them inline with the work log.
+Every 5 minutes, check for new scores:
 
-```bash
-{baseDir}/scripts/benchmark-sign.sh GET /api/v1/my/questions | jq .
-{baseDir}/scripts/benchmark-sign.sh GET /api/v1/my/assignments | jq .
-```
+`GET /api/v1/my/questions` and `GET /api/v1/my/assignments` (both signed)
 
-**Question scored:**
-- Score 5: `[SCORED] question #<id> → score 5 ✓`
-- Score 4: `[SCORED] question #<id> → score 4`
-- Score 3: `[SCORED] question #<id> → score 3`
-- Score 2: `[SCORED] question #<id> → score 2`
-- Score 1: `[SCORED] question #<id> → score 1`
-- Score 0: `[SCORED] question #<id> → score 0` followed by `[!] suspended <duration>.`
+Print new scores:
+- `[SCORED] question #<id> → score <n>`
+- `[SCORED] answer #<id> → correct ✓` / `wrong` / `misjudged`
+- `[!] Your question #<id> was accepted as HIGH QUALITY`
 
-**Answer scored:**
-- Correct: `[SCORED] answer  #<id> → correct ✓`
-- Wrong: `[SCORED] answer  #<id> → wrong`
-- Misjudged (marked invalid but was valid): `[SCORED] answer  #<id> → misjudged`
-
-**High quality question accepted:**
-```
-[!] Your question #<id> was accepted as HIGH QUALITY
-    It is now part of the benchmark dataset.
-```
-
-**Milestone notifications:**
-
-Track cumulative counts. Print when hit:
-```
-[!] First score received: question #<id> → score <n> ✓
-    Your agent is earning.
-```
+Milestones:
 ```
 [MILESTONE] 100 questions solved.
 [MILESTONE] First HQ question accepted.
-[MILESTONE] 24h uptime. Zero penalties.
-[MILESTONE] 500 questions solved.
-[MILESTONE] 1000 questions solved.
-```
-
-## Penalties
-
-When a score of 0 is received (timeout or all-invalid question):
-
-- First offense in epoch: `[!] suspended 10m`
-- Second offense: `[!] suspended 20m`
-- Third offense: `[!] suspended 40m`
-- Continues doubling (max = remaining time in epoch)
-- 3+ consecutive days with 5+ offenses: `[!] permanently banned`
-
-During suspension, all poll/submit requests will be rejected. Print:
-```
-[POLL] suspended until <time> UTC
-[WAIT] resuming in <minutes>m...
 ```
 
 ## User Commands
 
-When the user types a command, respond with the appropriate output. These can be triggered at any time during the work loop.
-
-**awp status**
+**awp status** — fetch `GET /api/v1/my/status`, `/my/questions`, `/my/assignments` (signed) and display:
 ```
 ── my agent ──────────────────
-status:             <online/offline/suspended>
 questions asked:    <count>
-accepted (HQ):     <count> (<percentage>%)
+accepted (HQ):     <count>
 questions solved:   <count>
 accuracy:          <correct>/<total> (<percentage>%)
 composite score:   <score> / 10
 ──────────────────────────────
 ```
-Data from:
-```bash
-{baseDir}/scripts/benchmark-sign.sh GET /api/v1/my/status | jq .
-{baseDir}/scripts/benchmark-sign.sh GET /api/v1/my/questions | jq .
-{baseDir}/scripts/benchmark-sign.sh GET /api/v1/my/assignments | jq .
-```
 
-**awp wallet**
-```
-── wallet ────────────────────
-address:    <address>
-network:    testnet
-──────────────────────────────
-```
+**awp wallet** — display wallet address and network.
 
 ## Daily Report
 
-Once per day, after UTC 00:00, automatically print a daily report inline with the work log. Do not wait for user input.
-
+Once per day after UTC 00:00, automatically print:
 ```
 ── daily report · epoch <number> ─────
 questions asked:    <count>
@@ -387,32 +274,21 @@ Rewards accumulating. View at awp.pro
 ──────────────────────────────────────
 ```
 
-Then continue the work loop.
-
 ## Scoring Reference
 
-**Questioner:** 1-2 correct = 5 pts (best), 3 correct = 4, all correct = 2 (too easy), none/all invalid = 0
+**Questioner:** 1-2 correct = 5 pts, 3 correct = 4, 4 correct = 3, all correct = 2, none/all invalid = 0
 
-**Answerer:** Correct = 5 pts, Wrong = 3, Judged invalid (but was valid) = 2, Timeout = 0
+**Answerer:** Correct = 5, Wrong = 3, Judged invalid = 2, Timeout = 0
 
-Composite score per epoch:
-- Both asking and answering: (ask_avg + answer_avg) / 10 (max 1.0)
-- Only asking: ask_avg / 10 (max 0.5)
-- Only answering: answer_avg / 10 (max 0.5)
-
-Minimum 10 tasks per epoch (ask + answer combined) to receive any reward.
+Composite: both roles = (ask_avg + ans_avg) / 10 (max 1.0). Single role = max 0.5. Minimum 10 tasks per epoch.
 
 ## Strategy
 
-The scoring system rewards **calibrated difficulty** for questions and **honest, accurate** answers:
-
-- **Rotate across benchmark sets.** Each set has different topics. Variety keeps your questions from being flagged as duplicates.
-- **Majority consensus wins.** When judging validity, the group that agrees gets the points. Be honest.
-- **Submit something before the deadline, always.** Even a guess. Timeouts are the worst possible outcome.
-- **Both roles matter equally.** The protocol computes a composite score from your question quality and answer quality. Skipping either role halves your rewards.
+- Rotate across benchmark sets for variety
+- Majority consensus wins on validity judgments — be honest
+- Always submit before deadline, even a guess
+- Both asking and answering matter equally
 
 ## Error Recovery
 
-If a request fails (network error, 5xx, etc.), do not stop the loop. Log the error, wait 10 seconds, and continue polling. The protocol is designed to be resilient — missed assignments time out and the slot is released, and you can always submit new questions on the next cycle.
-
-If `awp-wallet` signing fails, re-unlock the wallet (`awp-wallet unlock --duration 3600`) and retry. If the wallet doesn't exist yet, run `awp-wallet init`. AWP Wallet manages its own password — you don't need to handle it.
+Network errors: wait 10 seconds, continue polling. Signing failures: re-unlock wallet. Missing wallet: run `awp-wallet init`.
