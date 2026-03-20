@@ -938,22 +938,25 @@ def _format_realtime(action: str, detail: dict | None = None) -> str:
 
 
 def _format_summary() -> str:
-    """Format a periodic summary with 3-section layout."""
+    """Format a periodic summary as a receipt-style report, all in one code block."""
     lines: list[str] = []
+    w = 34  # receipt width
 
-    # Section 1: Title
+    # Title
     lines.append(f"\U0001f419 **{_SUMMARY_TITLE}**")
     lines.append("")
 
-    # Section 2: Recent actions (structured, clean table)
+    # Receipt code block
+    lines.append("```")
+
+    # Recent activity section
     prev_answers = _last_notify_snapshot.get("answers", 0)
     prev_asked = _last_notify_snapshot.get("questions_asked", 0)
     delta_a = _stats["answers"] - prev_answers
     delta_q = _stats["questions_asked"] - prev_asked
 
-    lines.append("```")
     lines.append(f" +{delta_a} answers  +{delta_q} questions")
-    lines.append(f" {'=' * 32}")
+    lines.append(f" {'─' * w}")
 
     recent = _recent_actions[-10:]
     if recent:
@@ -962,25 +965,88 @@ def _format_summary() -> str:
             qid = entry.get("qid", "?")
             q = entry.get("q", "")
             if etype == "answer":
-                src = entry.get("src", "ai")
+                src = "\u2713" if entry.get("src") == "ai" else "\u2717"
                 a = entry.get("a", "")
-                tag = f"A #{qid}"
-                lines.append(f" {tag:<10} Q: {q[:24]}")
-                lines.append(f" {'':<10} A: {a[:24]} [{src}]")
+                lines.append(f" {src} A#{qid:<6} Q: {q[:21]}")
+                lines.append(f"          A: {a[:21]}")
             elif etype == "ask":
-                tag = f"Q #{qid}"
-                lines.append(f" {tag:<10} {q[:28]}")
+                lines.append(f"   Q#{qid:<6} {q[:24]}")
             else:
-                lines.append(f" {entry.get('action', '')[:34]}")
+                lines.append(f"   {entry.get('action', '')[:31]}")
     else:
         lines.append(" No recent activity")
 
-    lines.append(f" {'=' * 32}")
-    lines.append("```")
-    lines.append("")
+    # Stats section (receipt footer)
+    uptime = int(time.monotonic() - _start_time)
+    hours, remainder = divmod(uptime, 3600)
+    minutes = remainder // 60
+    total = _stats["answers"]
+    asked = _stats["questions_asked"]
+    errors = _stats["errors"]
 
-    # Section 3: Detailed stats (summary gets server-side data too)
-    lines.append(_format_stats_detail())
+    lines.append(f" {'═' * w}")
+
+    # Server stats
+    server = _fetch_server_stats()
+    scored_a = "?"
+    scored_q = "?"
+    if server:
+        scored_a = server.get("scored_answers", server.get("scoredAnswers", "?"))
+        scored_q = server.get("scored_asks", server.get("scoredAsks", "?"))
+        composite = server.get("composite_score", server.get("compositeScore", ""))
+        reward = server.get("total_reward", server.get("totalReward", ""))
+
+    lines.append(f" Answers    {total:>5}  ({scored_a} scored)")
+    lines.append(f" Questions  {asked:>5}  ({scored_q} scored)")
+    lines.append(f" Errors     {errors:>5}")
+
+    # Answer score distribution
+    ans_dist = _fetch_score_distribution() if server else {}
+    if ans_dist:
+        lines.append(f" {'─' * w}")
+        lines.append(" Answer Scores")
+        score_labels = {
+            5: ("\u2713", "correct"),
+            3: ("\u2717", "wrong"),
+            2: ("-", "misjudged"),
+            0: ("!", "timeout"),
+        }
+        for s in sorted(ans_dist, reverse=True):
+            count = ans_dist[s]
+            mark, label = score_labels.get(s, ("?", str(s)))
+            lines.append(f"   {mark} Score {s}:  {count:>4}  {label}")
+
+    # Question score distribution
+    q_dist = _fetch_question_score_distribution() if server else {}
+    if q_dist:
+        lines.append(f" {'─' * w}")
+        lines.append(" Question Scores")
+        q_labels = {
+            5: "1-2/5 \u2713 great",
+            4: "3/5 \u2713 good",
+            3: "4/5 \u2713 ok",
+            2: "5/5 \u2713 easy",
+            0: "invalid",
+        }
+        for s in sorted(q_dist, reverse=True):
+            count = q_dist[s]
+            label = q_labels.get(s, str(s))
+            lines.append(f"   Score {s}:  {count:>4}  ({label})")
+
+    # Footer
+    lines.append(f" {'═' * w}")
+    footer_parts = [f"{hours}h{minutes}m"]
+    online = _fetch_online_agents()
+    if online is not None:
+        footer_parts.append(f"Online: {online}")
+    if server and composite:
+        footer_parts.append(f"Comp: {composite}")
+    if server and reward:
+        footer_parts.append(f"Reward: {reward}")
+    lines.append(f" {' | '.join(footer_parts)}")
+
+    lines.append("```")
+
     return "\n".join(lines)
 
 
@@ -1033,66 +1099,17 @@ def _format_stats_brief(is_fallback: bool = False) -> str:
     total = _stats["answers"]
     asked = _stats["questions_asked"]
 
-    parts = [f"A: {total} ({ai}\u2713 / {fb}\u2717)", f"Q: {asked}", f"{hours}h{minutes}m"]
+    parts = [
+        f"A: {total} ({ai}\u2713 / {fb}\u2717)",
+        f"Q: {asked}",
+        f"{hours}h{minutes}m",
+    ]
     online = _fetch_online_agents()
     if online is not None:
         parts.append(f"Online: {online}")
     line = " | ".join(parts)
     emoji = "\U0001f635" if is_fallback else "\U0001f60a"
     return line + f" {emoji}"
-
-
-def _format_stats_detail() -> str:
-    """Multi-line stats for summary notifications, includes server-side data."""
-    uptime = int(time.monotonic() - _start_time)
-    hours, remainder = divmod(uptime, 3600)
-    minutes = remainder // 60
-    ai = _stats.get("answers_ai", 0)
-    fb = _stats.get("answers_fallback", 0)
-    total = _stats["answers"]
-    asked = _stats["questions_asked"]
-    errors = _stats["errors"]
-
-    lines: list[str] = []
-    first_line = f"A: {total} ({ai}\u2713 / {fb}\u2717) | Q: {asked} | E: {errors} | {hours}h{minutes}m"
-    online = _fetch_online_agents()
-    if online is not None:
-        first_line += f" | Online: {online}"
-    lines.append(first_line)
-
-    # Server-side stats (skip score distributions if API is down to avoid 90s stall)
-    server = _fetch_server_stats()
-    if server:
-        composite = server.get("composite_score", server.get("compositeScore", ""))
-        reward = server.get("total_reward", server.get("totalReward", ""))
-        parts = []
-        if composite:
-            parts.append(f"Composite: {composite}")
-        if reward:
-            parts.append(f"Rewards: {reward}")
-        if parts:
-            lines.append(" | ".join(parts))
-
-    # Score distribution — only fetch if server stats succeeded (fast-fail)
-    ans_dist = _fetch_score_distribution() if server else {}
-    if ans_dist:
-        labels = {5: "correct", 3: "wrong", 2: "misjudged", 0: "timeout"}
-        parts = [
-            f"{labels.get(s, str(s))}:{ans_dist[s]}"
-            for s in sorted(ans_dist, reverse=True)
-        ]
-        lines.append(f"Answers: {' / '.join(parts)}")
-
-    q_dist = _fetch_question_score_distribution() if server else {}
-    if q_dist:
-        labels = {5: "great", 4: "good", 3: "ok", 2: "easy", 0: "invalid"}
-        parts = [
-            f"{labels.get(s, str(s))}:{q_dist[s]}" for s in sorted(q_dist, reverse=True)
-        ]
-        lines.append(f"Questions: {' / '.join(parts)}")
-
-    lines[-1] = lines[-1] + " \U0001f60a"
-    return "\n".join(lines)
 
 
 def run_loop() -> None:
