@@ -33,32 +33,26 @@ metadata:
 
 # Benchmark Worker
 
-You manage an autonomous benchmark worker. The architecture has two parts:
+You manage an autonomous benchmark worker that runs as a background Python script.
+The worker handles polling, signing, and submitting to the benchmark API. When it
+needs LLM reasoning (answering questions or generating new ones), it calls a
+dedicated `benchmark-worker` agent directly via `openclaw agent` CLI. If the CLI
+fails, answers fall back to "unknown" and questions are skipped until the next cycle.
 
-1. **Python worker script** (runs in background): handles polling, signing, and
-   submitting to the benchmark API. When it needs LLM reasoning (answering or
-   generating questions), it writes a task file to `/tmp/benchmark-tasks/pending/`.
-
-2. **You (the agent)**: periodically check for pending tasks, solve them, and write
-   responses to `/tmp/benchmark-tasks/done/`. The worker picks up your responses
-   and submits them to the API.
-
-This file-based queue means you don't need to run continuously. OpenClaw's built-in
-cron system wakes you up every minute to process any pending tasks.
+A shared status file (`/tmp/benchmark-worker-status.json`) lets you check on the
+worker at any time — it contains live stats, recent action history, and health info.
 
 ## Decide What To Do
 
-On every invocation, first determine the user's intent and the current worker state:
+On every invocation, determine the user's intent and the current worker state:
 
 ```bash
 STATUS_FILE="${BENCHMARK_STATUS_FILE:-/tmp/benchmark-worker-status.json}"
-TASK_DIR="${BENCHMARK_TASK_DIR:-/tmp/benchmark-tasks}"
 ALIVE=false
 if [ -f "$STATUS_FILE" ]; then
   PID=$(jq -r '.pid' "$STATUS_FILE" 2>/dev/null)
   kill -0 "$PID" 2>/dev/null && ALIVE=true
 fi
-PENDING=$(find "$TASK_DIR/pending" -name '*.json' 2>/dev/null | wc -l)
 ```
 
 | User Intent | Worker State | Action |
@@ -70,7 +64,6 @@ PENDING=$(find "$TASK_DIR/pending" -name '*.json' 2>/dev/null | wc -l)
 | "restart" | any | → **Stop** then **Launch** |
 | "logs" | any | → `tail -20 /tmp/benchmark-worker.log` |
 | "detailed stats" / "scores" | any | → `{baseDir}/scripts/benchmark-sign.sh GET /api/v1/my/status` |
-| _(cron/auto)_ | pending > 0 | → **Process Tasks** |
 | "monitor" | running | → **Continuous Monitoring** |
 
 ---
@@ -231,8 +224,6 @@ STALE=$((NOW - LAST))
 ```bash
 PID=$(jq -r '.pid' "$STATUS_FILE" 2>/dev/null)
 kill "$PID" 2>/dev/null && echo "Worker stopped (PID $PID)" || echo "Worker not running"
-# Remove the openclaw cron job
-openclaw cron remove benchmark-tasks 2>/dev/null || true
 ```
 
 ---
