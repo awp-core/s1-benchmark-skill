@@ -2,8 +2,7 @@
 """Standalone benchmark worker — polls, answers, and asks in a loop.
 
 Delegates signing to benchmark-sign.sh.
-When LLM reasoning is needed, writes task files to a queue directory.
-An external agent (OpenClaw) processes those tasks on a cron schedule.
+When LLM reasoning is needed, calls openclaw agent CLI directly.
 """
 
 import json
@@ -32,7 +31,7 @@ NET_RETRY_SLEEP: int = 10  # seconds after network error
 SUSPEND_SLEEP: int = 60  # seconds when suspended
 UNLOCK_INTERVAL: int = 25 * 60  # re-unlock every 25 minutes
 ASK_INTERVAL: int = 60  # seconds between question submissions (API rate limit: 1/min)
-ANSWER_CLI_TIMEOUT: int = 120  # seconds for CLI answering (single attempt)
+CLI_TIMEOUT: int = 120  # max seconds for a single openclaw agent CLI call
 STATUS_FILE: str = os.environ.get(
     "BENCHMARK_STATUS_FILE", "/tmp/benchmark-worker-status.json"
 )
@@ -44,7 +43,6 @@ NOTIFY_MODE: str = os.environ.get("NOTIFY_MODE", "summary")
 NOTIFY_INTERVAL: int = int(
     os.environ.get("NOTIFY_INTERVAL", "300")
 )  # seconds between summary notifications
-CLI_TIMEOUT: int = 120  # max seconds for a single CLI call
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -377,11 +375,9 @@ def re_enable_cli() -> None:
         _cli_fail_count = 0
         log.info("[AGENT] CLI re-enabled")
     else:
-        log.info("[AGENT] CLI still unavailable, using file queue")
+        log.info("[AGENT] CLI still unavailable")
 
 
-# ---------------------------------------------------------------------------
-# Task queue: file-based communication with OpenClaw agent (fallback)
 # ---------------------------------------------------------------------------
 # Response parsing
 # ---------------------------------------------------------------------------
@@ -508,14 +504,14 @@ def _handle_answer(assigned: dict) -> None:
     question_text = assigned.get("question", "")
     log.info('[Q#%s] "%s"', qid, question_text[:60])
 
-    # Calculate timeout from deadline (cap at ANSWER_CLI_TIMEOUT)
-    timeout = float(ANSWER_CLI_TIMEOUT)
+    # Calculate timeout from deadline (cap at CLI_TIMEOUT)
+    timeout = float(CLI_TIMEOUT)
     reply_ddl = assigned.get("reply_ddl", "")
     if reply_ddl:
         try:
             deadline_dt = datetime.fromisoformat(reply_ddl.replace("Z", "+00:00"))
             remaining = (deadline_dt - datetime.now(timezone.utc)).total_seconds() - 15
-            timeout = min(max(remaining, 20), float(ANSWER_CLI_TIMEOUT))
+            timeout = min(max(remaining, 20), float(CLI_TIMEOUT))
         except (ValueError, TypeError):
             pass
 
@@ -569,12 +565,7 @@ def _handle_answer(assigned: dict) -> None:
 
 
 def _handle_ask() -> None:
-    """Generate a new question. Non-blocking: tries CLI, then writes to file queue.
-
-    Unlike answering (time-critical), question generation is not urgent.
-    If CLI fails, we write the task and move on — cron will handle it.
-    The cron agent processes the task and submits the question directly.
-    """
+    """Generate a new question via CLI. If CLI fails, skip and retry next cycle."""
     raw = signed_request("GET", "/api/v1/benchmark-sets")
     try:
         sets = json.loads(raw).get("data", [])
