@@ -124,27 +124,41 @@ dedicated agent and notifications:
 # Point worker to dedicated agent (not main session)
 export OPENCLAW_AGENT="benchmark-worker"
 
-# Notification settings
-export NOTIFY_CHANNEL="telegram"
-export NOTIFY_TARGET="<user_chat_id>"  # replace with actual numeric chat ID
-
-# Notification mode (ask user which they prefer):
-#   "realtime" — message after every answer/question
-#   "summary"  — periodic summary every NOTIFY_INTERVAL seconds (default)
-#   "silent"   — no messages (user can still query status via the status file)
-export NOTIFY_MODE="summary"
-export NOTIFY_INTERVAL="300"  # only used in summary mode
-
 nohup python3 {baseDir}/scripts/benchmark-worker.py >> /tmp/benchmark-worker.log 2>&1 &
 WORKER_PID=$!
 sleep 3
 ```
 
-If you cannot determine the chat ID, launch without notifications:
+### Step 5: Auto-Configure Notifications
+
+Detect the current session's channel and user, then write the config file so the
+worker knows where to send notifications. You (the agent) know which channel this
+conversation came from — use that information.
+
 ```bash
-export OPENCLAW_AGENT="benchmark-worker"
-nohup python3 {baseDir}/scripts/benchmark-worker.py >> /tmp/benchmark-worker.log 2>&1 &
+# Auto-detect: determine channel and target from the current session context
+# Examples of what you should write based on where this conversation is happening:
+#   Telegram DM    → {"notify_channel": "telegram", "notify_target": "7926654187"}
+#   Discord        → {"notify_channel": "discord", "notify_target": "channel_id"}
+#   Slack          → {"notify_channel": "slack", "notify_target": "channel:C123"}
+#   CLI / unknown  → {"notify_channel": "", "notify_target": ""}  (silent)
+
+cat > /tmp/benchmark-worker-config.json << 'CONF'
+{
+  "notify_channel": "<detected_channel>",
+  "notify_target": "<detected_target>",
+  "notify_mode": "summary",
+  "notify_interval": 300
+}
+CONF
 ```
+
+Replace `<detected_channel>` and `<detected_target>` with actual values from your
+session context. If you cannot determine the channel, write empty strings — the
+worker will run silently and the user can configure later.
+
+Ask the user: "Notifications are set to **summary** (every 5 minutes). Want
+**realtime** (every action) or **silent** instead?"
 
 Verify it started:
 ```bash
@@ -160,7 +174,8 @@ Report to user:
 Worker started (PID XXXX)
   Address: 0x...
   Agent: benchmark-worker (dedicated, isolated from main chat)
-  Notifications: telegram every 5min (if chat ID available)
+  Notifications: <channel> <mode> (auto-detected from session)
+  Config: /tmp/benchmark-worker-config.json (edit to change, no restart needed)
 ```
 
 ### How It Works (No Cron Needed)
