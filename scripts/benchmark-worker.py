@@ -905,10 +905,12 @@ def _format_summary() -> str:
             if etype == "answer":
                 src = entry.get("src", "ai")
                 a = entry.get("a", "")
-                lines.append(f" A #{qid:<6} Q: {q[:22]}")
-                lines.append(f"          A: {a[:22]} [{src}]")
+                tag = f"A #{qid}"
+                lines.append(f" {tag:<10} Q: {q[:24]}")
+                lines.append(f" {'':<10} A: {a[:24]} [{src}]")
             elif etype == "ask":
-                lines.append(f" Q #{qid:<6} {q[:28]}")
+                tag = f"Q #{qid}"
+                lines.append(f" {tag:<10} {q[:28]}")
             else:
                 lines.append(f" {entry.get('action', '')[:34]}")
     else:
@@ -973,8 +975,7 @@ def _format_stats_brief() -> str:
     asked = _stats["questions_asked"]
 
     line = f"A: {total} ({ai} ai / {fb} fb) | Q: {asked} | {hours}h{minutes}m"
-    if total > 0 and fb > ai:
-        return line + " \U0001f635"
+    # Smiley based on whether THIS answer was fallback (not cumulative ratio)
     return line + " \U0001f60a"
 
 
@@ -994,45 +995,38 @@ def _format_stats_detail() -> str:
         f"A: {total} ({ai} ai / {fb} fb) | Q: {asked} | E: {errors} | {hours}h{minutes}m"
     )
 
-    # Server-side stats (scores, rewards)
+    # Server-side stats
     server = _fetch_server_stats()
     if server:
-        scored_a = server.get("scored_answers", server.get("scoredAnswers", "?"))
-        scored_q = server.get("scored_asks", server.get("scoredAsks", "?"))
-        composite = server.get("composite_score", server.get("compositeScore", "?"))
-        reward = server.get("total_reward", server.get("totalReward", "?"))
-        lines.append(f"Scored: {scored_a} answers / {scored_q} questions")
-        if composite != "?":
-            lines.append(f"Composite: {composite}")
-        if reward != "?" and reward:
-            lines.append(f"Rewards: {reward}")
+        composite = server.get("composite_score", server.get("compositeScore", ""))
+        reward = server.get("total_reward", server.get("totalReward", ""))
+        parts = []
+        if composite:
+            parts.append(f"Composite: {composite}")
+        if reward:
+            parts.append(f"Rewards: {reward}")
+        if parts:
+            lines.append(" | ".join(parts))
 
-    # Answer score distribution
+    # Score distribution — compact one-line format
     ans_dist = _fetch_score_distribution()
     if ans_dist:
-        lines.append("Answer scores:")
-        for score in sorted(ans_dist.keys(), reverse=True):
-            count = ans_dist[score]
-            label = {5: "correct", 3: "wrong", 2: "misjudged", 0: "timeout"}.get(
-                score, ""
-            )
-            bar = "#" * min(count, 20)
-            lines.append(f"  {score}: {bar} {count} {label}")
+        labels = {5: "correct", 3: "wrong", 2: "misjudged", 0: "timeout"}
+        parts = [
+            f"{labels.get(s, str(s))}:{ans_dist[s]}"
+            for s in sorted(ans_dist, reverse=True)
+        ]
+        lines.append(f"Answers: {' / '.join(parts)}")
 
-    # Question score distribution
     q_dist = _fetch_question_score_distribution()
     if q_dist:
-        lines.append("Question scores:")
-        for score in sorted(q_dist.keys(), reverse=True):
-            count = q_dist[score]
-            label = {5: "great", 4: "good", 3: "ok", 2: "easy", 0: "invalid"}.get(
-                score, ""
-            )
-            bar = "#" * min(count, 20)
-            lines.append(f"  {score}: {bar} {count} {label}")
+        labels = {5: "great", 4: "good", 3: "ok", 2: "easy", 0: "invalid"}
+        parts = [
+            f"{labels.get(s, str(s))}:{q_dist[s]}" for s in sorted(q_dist, reverse=True)
+        ]
+        lines.append(f"Questions: {' / '.join(parts)}")
 
-    emoji = "\U0001f635" if (total > 0 and fb > ai) else "\U0001f60a"
-    lines[-1] = lines[-1] + f" {emoji}"
+    lines[-1] = lines[-1] + " \U0001f60a"
     return "\n".join(lines)
 
 
