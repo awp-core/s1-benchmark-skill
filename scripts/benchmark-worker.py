@@ -723,21 +723,21 @@ def _format_realtime(action: str, detail: dict | None = None) -> str:
     lines: list[str] = []
 
     # Section 1: Title
-    lines.append("\U0001f419 *Octopus Report from Subnet#1 Benchmark Bot*")
+    lines.append("\U0001f419 *Bloop! Fresh catch from Subnet#1*")
     lines.append("")
 
-    # Section 2: Action detail
+    # Section 2: Action detail (boxed with decorators)
+    lines.append("\u2500" * 28)
     if detail:
         if detail.get("type") == "answer":
-            lines.append(f"Q: {detail.get('question', '')[:60]}...")
-            lines.append(
-                f"A: {detail.get('answer', '')[:60]}..."
-                f" ({'ai' if not detail.get('fallback') else 'fallback'})"
-            )
+            src = "\u2705" if not detail.get("fallback") else "\u26a0\ufe0f"
+            lines.append(f"\U0001f4dd Q: {detail.get('question', '')[:55]}")
+            lines.append(f"{src} A: {detail.get('answer', '')[:55]}")
         elif detail.get("type") == "ask":
-            lines.append(f"Asked: {detail.get('question', '')[:60]}...")
+            lines.append(f"\U0001f4a1 New question: {detail.get('question', '')[:50]}")
     else:
         lines.append(action)
+    lines.append("\u2500" * 28)
     lines.append("")
 
     # Section 3: Stats
@@ -750,21 +750,31 @@ def _format_summary() -> str:
     lines: list[str] = []
 
     # Section 1: Title
-    lines.append("\U0001f419 *Octopus Report from Subnet#1 Benchmark Bot*")
+    lines.append("\U0001f419 *Bloop! Fresh catch from Subnet#1*")
     lines.append("")
 
-    # Section 2: Recent actions (incremental, last 10)
+    # Section 2: Recent actions (boxed)
+    prev_answers = _last_notify_snapshot.get("answers", 0)
+    prev_asked = _last_notify_snapshot.get("questions_asked", 0)
+    delta_a = _stats["answers"] - prev_answers
+    delta_q = _stats["questions_asked"] - prev_asked
+
+    lines.append("\u2500" * 28)
+    lines.append(f"\U0001f4ca +{delta_a} answers, +{delta_q} questions")
+    lines.append("")
     recent = _recent_actions[-10:]
     if recent:
-        prev_answers = _last_notify_snapshot.get("answers", 0)
-        prev_asked = _last_notify_snapshot.get("questions_asked", 0)
-        delta_a = _stats["answers"] - prev_answers
-        delta_q = _stats["questions_asked"] - prev_asked
-        lines.append(f"Recent: +{delta_a} answers, +{delta_q} questions")
         for entry in recent:
-            lines.append(f"  {entry['action'][:70]}")
+            act = entry["action"]
+            if "[A#" in act:
+                lines.append(f"  \u2705 {act[:65]}")
+            elif "[ASK]" in act:
+                lines.append(f"  \U0001f4a1 {act[:65]}")
+            else:
+                lines.append(f"  \u2022 {act[:65]}")
     else:
-        lines.append("No recent activity")
+        lines.append("  \U0001f634 No recent activity")
+    lines.append("\u2500" * 28)
     lines.append("")
 
     # Section 3: Stats
@@ -782,15 +792,14 @@ def _format_stats_block() -> str:
     total = _stats["answers"]
     asked = _stats["questions_asked"]
     errors = _stats["errors"]
-    polls = _stats["polls"]
 
     lines = [
-        f"Polls: {polls} | Answers: {total} ({ai} ai / {fb} fallback)",
-        f"Questions: {asked} | Errors: {errors}",
-        f"Uptime: {hours}h {minutes}m",
+        f"\U0001f3af Answers: {total} ({ai}\u2705 / {fb}\u26a0\ufe0f)",
+        f"\U0001f4a1 Questions: {asked} | \u274c Errors: {errors}",
+        f"\u23f1 Uptime: {hours}h {minutes}m",
     ]
     if total > 0 and fb > ai:
-        lines.append("Warning: high fallback ratio")
+        lines.append("\u26a0\ufe0f High fallback ratio — check agent status")
     return "\n".join(lines)
 
 
