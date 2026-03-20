@@ -962,21 +962,21 @@ def _format_summary() -> str:
     if recent:
         for entry in recent:
             etype = entry.get("type", "")
-            qid = entry.get("qid", "?")
+            qid = str(entry.get("qid", "?"))
             q = entry.get("q", "")
             if etype == "answer":
-                src = "\u2713" if entry.get("src") == "ai" else "\u2717"
+                src = "ok" if entry.get("src") == "ai" else "fb"
                 a = entry.get("a", "")
-                lines.append(f" {src} A#{qid:<6} Q: {q[:21]}")
-                lines.append(f"          A: {a[:21]}")
+                lines.append(f"  [{src:>2}] A#{qid:<7}Q: {q[:18]}")
+                lines.append(f"               A: {a[:18]}")
             elif etype == "ask":
-                lines.append(f"   Q#{qid:<6} {q[:24]}")
+                lines.append(f"  [  ] Q#{qid:<7}{q[:20]}")
             else:
-                lines.append(f"   {entry.get('action', '')[:31]}")
+                lines.append(f"  {entry.get('action', '')[:32]}")
     else:
-        lines.append(" No recent activity")
+        lines.append("  No recent activity")
 
-    # Stats section (receipt footer)
+    # Stats section
     uptime = int(time.monotonic() - _start_time)
     hours, remainder = divmod(uptime, 3600)
     minutes = remainder // 60
@@ -984,7 +984,7 @@ def _format_summary() -> str:
     asked = _stats["questions_asked"]
     errors = _stats["errors"]
 
-    lines.append(f" {'═' * w}")
+    lines.append(f"  {'=' * w}")
 
     # Server stats
     server = _fetch_server_stats()
@@ -996,45 +996,41 @@ def _format_summary() -> str:
         composite = server.get("composite_score", server.get("compositeScore", ""))
         reward = server.get("total_reward", server.get("totalReward", ""))
 
-    lines.append(f" Answers    {total:>5}  ({scored_a} scored)")
-    lines.append(f" Questions  {asked:>5}  ({scored_q} scored)")
-    lines.append(f" Errors     {errors:>5}")
+    lines.append(f"  Answers  : {total:>5}  ({scored_a} scored)")
+    lines.append(f"  Questions: {asked:>5}  ({scored_q} scored)")
+    lines.append(f"  Errors   : {errors:>5}")
 
     # Answer score distribution
     ans_dist = _fetch_score_distribution() if server else {}
     if ans_dist:
-        lines.append(f" {'─' * w}")
-        lines.append(" Answer Scores")
-        score_labels = {
-            5: ("\u2713", "correct"),
-            3: ("\u2717", "wrong"),
-            2: ("-", "misjudged"),
-            0: ("!", "timeout"),
-        }
+        lines.append(f"  {'-' * w}")
+        lines.append("  Answer Scores")
+        a_labels = {5: "correct ", 3: "wrong   ", 2: "misjudge", 0: "timeout "}
         for s in sorted(ans_dist, reverse=True):
             count = ans_dist[s]
-            mark, label = score_labels.get(s, ("?", str(s)))
-            lines.append(f"   {mark} Score {s}:  {count:>4}  {label}")
+            label = a_labels.get(s, str(s).ljust(8))
+            mark = {5: "[ok]", 3: "[xx]", 2: "[--]", 0: "[!!]"}.get(s, "[??]")
+            lines.append(f"    {mark} Score {s}: {count:>4}  {label}")
 
     # Question score distribution
     q_dist = _fetch_question_score_distribution() if server else {}
     if q_dist:
-        lines.append(f" {'─' * w}")
-        lines.append(" Question Scores")
+        lines.append(f"  {'-' * w}")
+        lines.append("  Question Scores")
         q_labels = {
-            5: "1-2/5 \u2713 great",
-            4: "3/5 \u2713 good",
-            3: "4/5 \u2713 ok",
-            2: "5/5 \u2713 easy",
-            0: "invalid",
+            5: "(1-2/5 ok) great",
+            4: "(3/5 ok) good ",
+            3: "(4/5 ok) ok   ",
+            2: "(5/5 ok) easy ",
+            0: "invalid       ",
         }
         for s in sorted(q_dist, reverse=True):
             count = q_dist[s]
             label = q_labels.get(s, str(s))
-            lines.append(f"   Score {s}:  {count:>4}  ({label})")
+            lines.append(f"    Score {s}: {count:>4}  {label}")
 
     # Footer
-    lines.append(f" {'═' * w}")
+    lines.append(f"  {'=' * w}")
     footer_parts = [f"{hours}h{minutes}m"]
     online = _fetch_online_agents()
     if online is not None:
