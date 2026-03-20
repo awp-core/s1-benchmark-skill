@@ -295,6 +295,7 @@ def signed_request(method: str, path: str, body: str = "") -> str:
 # ---------------------------------------------------------------------------
 
 _agent_id: str = ""  # detected at startup
+_session_counter: int = 0  # rotating session pool counter
 
 
 def detect_agent() -> str:
@@ -365,10 +366,14 @@ def call_agent(prompt: str, timeout: float = CLI_TIMEOUT) -> str | None:
     instead of blocking for the full timeout duration.
     """
     try:
-        # Use a unique session ID per call to prevent context accumulation.
-        # Without this, calls share the same session and eventually hit
-        # Anthropic's long-context rate limit (229k+ tokens).
-        session_id = f"bw-{int(time.time())}-{os.getpid()}"
+        # Rotate through a small pool of session IDs to prevent context
+        # accumulation (which causes Anthropic rate limits at 229k+ tokens).
+        # Pool of 8 means each session is reused every ~40s (8 * 5s poll),
+        # by which time the previous context is gone. This avoids creating
+        # unlimited orphaned sessions in the gateway.
+        global _session_counter
+        _session_counter += 1
+        session_id = f"bw-{INSTANCE_ID}-{_session_counter % 8}"
         proc = subprocess.Popen(
             [
                 "openclaw",
