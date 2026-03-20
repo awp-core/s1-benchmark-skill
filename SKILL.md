@@ -129,28 +129,26 @@ Gateway's internal RPC — no HTTP endpoints or CLI workarounds needed.
 # Remove old cron job if exists
 openclaw cron remove benchmark-tasks 2>/dev/null || true
 
-# Add new cron job: every minute, check for pending tasks
+# Add new cron job: every minute
 openclaw cron add \
   --name "benchmark-tasks" \
   --cron "* * * * *" \
   --announce \
-  --message "You are the benchmark task processor. Run these steps every time:
+  --message "Run {baseDir}/scripts/process-tasks.sh and follow the instructions in {baseDir}/SKILL.md Process Tasks section."
+```
 
-1. Check /tmp/benchmark-tasks/pending/ for .json files.
+If `--announce` causes errors, try without it:
+```bash
+openclaw cron add \
+  --name "benchmark-tasks" \
+  --cron "* * * * *" \
+  --message "Run {baseDir}/scripts/process-tasks.sh and follow the instructions in {baseDir}/SKILL.md Process Tasks section."
+```
 
-2. If there ARE pending tasks, process each one:
-   a) Read it with cat
-   b) Read the 'prompt' field and solve the task
-   c) For type 'answer': write {\"valid\": true/false, \"answer\": \"...\"} to /tmp/benchmark-tasks/done/<task_id>.json
-   d) For type 'ask': write {\"question\": \"...\", \"answer\": \"...\"} to /tmp/benchmark-tasks/done/<task_id>.json
-   e) Use atomic writes: write to .tmp.json first, then mv to .json
-   f) Delete stale pending files older than 5 minutes
-
-3. ALWAYS read /tmp/benchmark-worker-status.json (even if no tasks were pending) and print a summary.
-   - If tasks were processed: [Benchmark] Processed N tasks | Worker: running | Answers: X (Y ai / Z fallback) | Questions: W | Errors: E | Uptime: HHh MMm
-   - If no tasks pending: [Benchmark] No pending tasks | Worker: running | Answers: X (Y ai / Z fallback) | Questions: W | Errors: E | Uptime: HHh MMm
-   - If worker status file missing: [Benchmark] Worker not running! Consider restarting.
-   - If fallback ratio is high (fallback > ai): [Benchmark] WARNING: High fallback ratio — CLI agent may not be responding. Check openclaw agent status."
+Check cron status and recent errors:
+```bash
+openclaw cron list
+openclaw cron runs benchmark-tasks
 ```
 
 Verify the cron job was created:
@@ -318,6 +316,35 @@ nohup python3 {baseDir}/scripts/benchmark-worker.py >> /tmp/benchmark-worker.log
 ```
 
 If restart fails 3 times within 10 minutes, stop and alert the user.
+
+---
+
+## Troubleshooting
+
+**Cron not working (status: error):**
+```bash
+# Check error details
+openclaw cron runs benchmark-tasks
+
+# Recreate the cron job
+openclaw cron remove benchmark-tasks
+openclaw cron add --name "benchmark-tasks" --cron "* * * * *" \
+  --message "Run {baseDir}/scripts/process-tasks.sh and follow {baseDir}/SKILL.md Process Tasks section."
+```
+
+**Pending tasks piling up, done/ empty:**
+- Cron agent is not running → check `openclaw cron list`
+- Cron agent errors → check `openclaw cron runs benchmark-tasks`
+- Manually process: run `{baseDir}/scripts/process-tasks.sh`, then follow Process Tasks
+
+**High fallback ratio:**
+- CLI agent not responding → `openclaw agent --agent main --message "ping"`
+- File queue too slow → cron only runs every 60s, tasks with <60s deadline will always fallback
+- Both paths down → check `openclaw` process is running
+
+**Worker not starting:**
+- Check log: `tail -20 /tmp/benchmark-worker.log`
+- Check status: `cat /tmp/benchmark-worker-status.json`
 
 ---
 
