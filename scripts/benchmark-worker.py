@@ -139,13 +139,16 @@ def _log_history(entry: dict) -> None:
         pass
 
 
-def _record_action(action: str) -> None:
+def _record_action(action: str, detail: dict | None = None) -> None:
     """Record the latest action for status reporting and history."""
     global _last_action, _last_action_at
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     _last_action = action
     _last_action_at = now
-    _recent_actions.append({"time": now, "action": action})
+    entry: dict = {"time": now, "action": action}
+    if detail:
+        entry.update(detail)
+    _recent_actions.append(entry)
     # Trim to keep memory bounded
     if len(_recent_actions) > _RECENT_ACTIONS_MAX * 2:
         del _recent_actions[: len(_recent_actions) - _RECENT_ACTIONS_MAX]
@@ -533,7 +536,16 @@ def _handle_answer(assigned: dict) -> None:
         _stats["answers_ai"] += 1
     if status == "ERR":
         _stats["errors"] += 1
-    _record_action(action)
+    _record_action(
+        action,
+        {
+            "type": "answer",
+            "qid": str(qid),
+            "q": question_text[:50],
+            "a": answer[:50],
+            "src": "fb" if is_fallback else "ai",
+        },
+    )
     _log_history(
         {
             "type": "answer",
@@ -604,7 +616,14 @@ def _handle_ask() -> None:
             action = f'[ASK] ok #{new_id} "{question[:40]}"'
             log.info("%s", action)
             _stats["questions_asked"] += 1
-            _record_action(action)
+            _record_action(
+                action,
+                {
+                    "type": "ask",
+                    "qid": str(new_id),
+                    "q": question[:50],
+                },
+            )
             _log_history(
                 {
                     "type": "ask",
@@ -743,39 +762,43 @@ def _format_summary() -> str:
     """Format a periodic summary with 3-section layout."""
     lines: list[str] = []
 
-    # Section 1: Title (bold, Telegram markdown)
+    # Section 1: Title
     lines.append("\U0001f419 **Bloop! Fresh catch from Subnet #1**")
     lines.append("")
 
-    # Section 2: Recent actions (code block for gray background)
+    # Section 2: Recent actions (structured, clean table)
     prev_answers = _last_notify_snapshot.get("answers", 0)
     prev_asked = _last_notify_snapshot.get("questions_asked", 0)
     delta_a = _stats["answers"] - prev_answers
     delta_q = _stats["questions_asked"] - prev_asked
 
     lines.append("```")
-    lines.append(f"+{delta_a} answers, +{delta_q} questions")
-    lines.append("")
+    lines.append(f" +{delta_a} answers  +{delta_q} questions")
+    lines.append(f" {'=' * 32}")
+
     recent = _recent_actions[-10:]
     if recent:
         for entry in recent:
-            act = entry["action"]
-            if "[A#" in act:
-                lines.append(
-                    f"  Answer {act[act.find('#') :][:20]} {act[act.find('"') : act.rfind('"') + 1][:30]}"
-                )
-            elif "[ASK]" in act:
-                lines.append(
-                    f"  Ask    {act[act.find('#') :][:20]} {act[act.find('"') : act.rfind('"') + 1][:30]}"
-                )
+            etype = entry.get("type", "")
+            qid = entry.get("qid", "?")
+            q = entry.get("q", "")
+            if etype == "answer":
+                src = entry.get("src", "ai")
+                a = entry.get("a", "")
+                lines.append(f" A #{qid:<6} Q: {q[:22]}")
+                lines.append(f"          A: {a[:22]} [{src}]")
+            elif etype == "ask":
+                lines.append(f" Q #{qid:<6} {q[:28]}")
             else:
-                lines.append(f"  {act[:55]}")
+                lines.append(f" {entry.get('action', '')[:34]}")
     else:
-        lines.append("  No recent activity")
+        lines.append(" No recent activity")
+
+    lines.append(f" {'=' * 32}")
     lines.append("```")
     lines.append("")
 
-    # Section 3: Stats (one line + smiley)
+    # Section 3: Stats
     lines.append(_format_stats_line())
     return "\n".join(lines)
 
