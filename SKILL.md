@@ -103,11 +103,26 @@ RESULT=$({baseDir}/scripts/benchmark-sign.sh GET /api/v1/poll)
 
 ### Step 3: Start the Script
 
+Determine the user's Telegram chat ID from the current session context (e.g., the
+numeric ID from the message that triggered this skill). Then launch with notifications:
+
 ```bash
 mkdir -p /tmp/benchmark-tasks/pending /tmp/benchmark-tasks/done
+
+# Set notification channel — the worker will send periodic status updates
+export NOTIFY_CHANNEL="telegram"
+export NOTIFY_TARGET="<user_chat_id>"  # replace with actual numeric chat ID
+export NOTIFY_INTERVAL="300"           # every 5 minutes
+
 nohup python3 {baseDir}/scripts/benchmark-worker.py >> /tmp/benchmark-worker.log 2>&1 &
 WORKER_PID=$!
 sleep 3
+```
+
+If you cannot determine the chat ID, launch without notifications (status is still
+available via the status file):
+```bash
+nohup python3 {baseDir}/scripts/benchmark-worker.py >> /tmp/benchmark-worker.log 2>&1 &
 ```
 
 Verify it started:
@@ -352,6 +367,10 @@ openclaw cron add --name "benchmark-tasks" --cron "* * * * *" --no-deliver \
 | `BENCHMARK_API_URL` | `https://tapis1.awp.sh` | Benchmark subnet API |
 | `BENCHMARK_STATUS_FILE` | `/tmp/benchmark-worker-status.json` | Status file path |
 | `BENCHMARK_TASK_DIR` | `/tmp/benchmark-tasks` | Task queue directory |
+| `OPENCLAW_AGENT` | _(auto-detect)_ | Agent ID for CLI calls |
+| `NOTIFY_CHANNEL` | _(disabled)_ | Notification channel (e.g. `telegram`) |
+| `NOTIFY_TARGET` | _(disabled)_ | Notification target (e.g. chat ID) |
+| `NOTIFY_INTERVAL` | `300` | Seconds between status notifications |
 
 ## Scoring Reference
 
