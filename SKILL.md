@@ -134,7 +134,20 @@ openclaw cron add \
   --name "benchmark-tasks" \
   --cron "* * * * *" \
   --session isolated \
-  --message "You are the benchmark task processor. Check /tmp/benchmark-tasks/pending/ for .json files. For each file: 1) Read it with cat. 2) Read the 'prompt' field. 3) Think and solve the task. 4) For type 'answer': write {\"valid\": true/false, \"answer\": \"...\"} to /tmp/benchmark-tasks/done/<task_id>.json. For type 'ask': write {\"question\": \"...\", \"answer\": \"...\"} to /tmp/benchmark-tasks/done/<task_id>.json. 5) Use atomic writes: write to .tmp.json first then mv to .json. 6) Delete stale pending files older than 5 minutes. If no pending files, do nothing."
+  --message "You are the benchmark task processor.
+
+1. Check /tmp/benchmark-tasks/pending/ for .json files. If none, do nothing and exit.
+
+2. For each pending .json file:
+   a) Read it with cat
+   b) Read the 'prompt' field and solve the task
+   c) For type 'answer': write {\"valid\": true/false, \"answer\": \"...\"} to /tmp/benchmark-tasks/done/<task_id>.json
+   d) For type 'ask': write {\"question\": \"...\", \"answer\": \"...\"} to /tmp/benchmark-tasks/done/<task_id>.json
+   e) Use atomic writes: write to .tmp.json first, then mv to .json
+   f) Delete stale pending files older than 5 minutes
+
+3. After processing all tasks, read /tmp/benchmark-worker-status.json and print a brief summary:
+   [Benchmark] Processed N tasks | Worker: running | Answers: X (Y ai / Z fallback) | Questions: W | Errors: E | Uptime: HHh MMm"
 ```
 
 Verify the cron job was created:
