@@ -83,6 +83,8 @@ _start_time: float = time.monotonic()
 _stats: dict[str, int] = {
     "polls": 0,
     "answers": 0,
+    "answers_ai": 0,
+    "answers_fallback": 0,
     "questions_asked": 0,
     "errors": 0,
 }
@@ -397,13 +399,19 @@ def _handle_answer(assigned: dict) -> None:
     # Wait for agent response
     response = _wait_for_response(task_id, timeout)
 
+    is_fallback = False
     if response and "answer" in response:
         valid = bool(response.get("valid", True))
         answer = str(response["answer"])
     else:
         # Fallback: wrong answer beats timeout
-        log.warning("[A#%s] no agent response, submitting fallback", qid)
+        log.warning(
+            "[A#%s] no agent response (timeout %.0fs), submitting fallback",
+            qid,
+            timeout,
+        )
         valid, answer = True, "unknown"
+        is_fallback = True
 
     body = json.dumps(
         {
@@ -418,9 +426,14 @@ def _handle_answer(assigned: dict) -> None:
     except json.JSONDecodeError:
         status = "ERR"
     validity = "valid" if valid else "invalid"
-    action = f'[A#{qid}] {validity} "{answer[:40]}" -> {status}'
+    src = "fallback" if is_fallback else "ai"
+    action = f'[A#{qid}] {validity} "{answer[:40]}" -> {status} ({src})'
     log.info("%s", action)
     _stats["answers"] += 1
+    if is_fallback:
+        _stats["answers_fallback"] += 1
+    else:
+        _stats["answers_ai"] += 1
     if status == "ERR":
         _stats["errors"] += 1
     _record_action(action)
@@ -511,12 +524,46 @@ def _handle_ask() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _cleanup_stale_files() -> None:
+    """Remove stale done/ files that were written after the worker already timed out."""
+    done_dir = Path(TASK_DIR, "done")
+    if not done_dir.exists():
+        return
+    now = time.time()
+    for f in done_dir.glob("*.json"):
+        try:
+            age = now - f.stat().st_mtime
+            if age > 300:  # older than 5 minutes
+                f.unlink(missing_ok=True)
+                log.info("[CLEANUP] removed stale done file: %s", f.name)
+        except OSError:
+            pass
+    # Also clean stale pending files (agent never picked them up)
+    pending_dir = Path(TASK_DIR, "pending")
+    if not pending_dir.exists():
+        return
+    for f in pending_dir.glob("*.json"):
+        try:
+            age = now - f.stat().st_mtime
+            if age > 300:
+                f.unlink(missing_ok=True)
+                log.info("[CLEANUP] removed stale pending file: %s", f.name)
+        except OSError:
+            pass
+
+
 def run_loop() -> None:
     """Main worker loop: poll -> answer or ask -> repeat."""
     counter = 0
     last_unlock = time.monotonic()
+    last_cleanup = time.monotonic()
 
     while running:
+        # -- Periodic cleanup of stale task files ----------------------------
+        if time.monotonic() - last_cleanup > 120:  # every 2 minutes
+            _cleanup_stale_files()
+            last_cleanup = time.monotonic()
+
         # -- Wallet refresh --------------------------------------------------
         if time.monotonic() - last_unlock > UNLOCK_INTERVAL:
             if unlock_wallet():
