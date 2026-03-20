@@ -1022,10 +1022,10 @@ def _format_summary() -> str:
         lines.append(f" {'-' * w}")
         lines.append(" Question Scores")
         q_info = {
-            5: "(1-2/5 \u2713) great",
-            4: "(3/5 \u2713) good",
-            3: "(4/5 \u2713) ok",
-            2: "(5/5 \u2713) easy",
+            5: "1~2 of 5 correct",
+            4: "3 of 5 correct",
+            3: "4 of 5 correct",
+            2: "5 of 5 correct",
             0: "invalid",
         }
         for s in sorted(q_dist, reverse=True):
