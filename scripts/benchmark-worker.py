@@ -959,12 +959,10 @@ def _format_summary() -> str:
     lines.append(f" +{delta_a} answers  +{delta_q} questions")
     lines.append(f" {'-' * w}")
 
-    all_recent = _recent_actions[-10:]
-    shown = all_recent[-3:] if len(all_recent) > 3 else all_recent
-    skipped = len(all_recent) - len(shown)
+    shown = _recent_actions[-3:]
+    total_delta = delta_a + delta_q
+    skipped = total_delta - len(shown)
 
-    if skipped > 0:
-        lines.append(f"  ... +{skipped} more")
     if shown:
         for entry in shown:
             etype = entry.get("type", "")
@@ -979,6 +977,8 @@ def _format_summary() -> str:
                 lines.append(f"    Q#{qid:<7} {q[:24]}")
             else:
                 lines.append(f"    {entry.get('action', '')[:30]}")
+        if skipped > 0:
+            lines.append(f"  ... and {skipped} more")
     else:
         lines.append("  No recent activity")
 
@@ -1037,7 +1037,7 @@ def _format_summary() -> str:
         for s in sorted(q_dist, reverse=True):
             count = q_dist[s]
             label = q_info.get(s, str(s))
-            lines.append(f"  Score {s}:  {count:>4}  {label}")
+            lines.append(f"    Score {s}:  {count:>4}  {label}")
 
     # Footer
     lines.append(f" {'=' * w}")
