@@ -337,35 +337,52 @@ def _agent_exists(agent_id: str) -> bool:
 def call_agent(prompt: str, timeout: float = CLI_TIMEOUT) -> str | None:
     """Call OpenClaw agent via CLI. Returns text response or None on failure.
 
-    Always attempts the call — never skips based on previous failures.
+    Uses Popen so we can abort early if SIGTERM is received (running=False),
+    instead of blocking for the full timeout duration.
     """
     try:
-        result = subprocess.run(
+        proc = subprocess.Popen(
             ["openclaw", "agent", "--agent", _agent_id, "--message", prompt],
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=int(timeout) + 10,
         )
-        if result.returncode == 0 and result.stdout.strip():
-            text = result.stdout.strip()
-            # Try to extract from JSON if the response is structured
-            try:
-                data = json.loads(text)
-                if isinstance(data, dict) and "output" in data:
-                    extracted = _extract_text_from_agent_response(data)
-                    if extracted:
-                        return extracted
-            except json.JSONDecodeError:
-                pass
-            return text
-        # CLI returned error
-        if result.stderr.strip():
-            log.warning("[AGENT] CLI stderr: %s", result.stderr.strip()[:200])
-        log.warning("[AGENT] CLI failed (exit %d)", result.returncode)
-    except subprocess.TimeoutExpired:
-        log.warning("[AGENT] CLI timeout (%ds)", int(timeout))
     except FileNotFoundError:
         log.warning("[AGENT] 'openclaw' command not found")
+        return None
+
+    # Poll until process finishes or we get shutdown signal
+    deadline = time.monotonic() + timeout + 10
+    while proc.poll() is None:
+        if not running:
+            proc.terminate()
+            log.info("[AGENT] CLI aborted due to shutdown")
+            return None
+        if time.monotonic() > deadline:
+            proc.terminate()
+            log.warning("[AGENT] CLI timeout (%ds)", int(timeout))
+            return None
+        time.sleep(0.5)
+
+    stdout = proc.stdout.read() if proc.stdout else ""
+    stderr = proc.stderr.read() if proc.stderr else ""
+
+    if proc.returncode == 0 and stdout.strip():
+        text = stdout.strip()
+        # Try to extract from JSON if the response is structured
+        try:
+            data = json.loads(text)
+            if isinstance(data, dict) and "output" in data:
+                extracted = _extract_text_from_agent_response(data)
+                if extracted:
+                    return extracted
+        except json.JSONDecodeError:
+            pass
+        return text
+    # CLI returned error
+    if stderr.strip():
+        log.warning("[AGENT] CLI stderr: %s", stderr.strip()[:200])
+    log.warning("[AGENT] CLI failed (exit %d)", proc.returncode)
     return None
 
 
