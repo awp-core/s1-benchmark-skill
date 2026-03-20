@@ -145,18 +145,23 @@ command -v curl >/dev/null && command -v jq >/dev/null && command -v sha256sum >
 
 ### 2. Wallet
 
-This skill depends on the **AWP Wallet** skill (`awp-wallet` CLI) for Ethereum key management and EIP-191 message signing. The wallet handles its own lifecycle — init, unlock, sign, lock.
+This skill depends on the **AWP Wallet** skill (`awp-wallet` CLI) for Ethereum key management and EIP-191 message signing. All commands output JSON to stdout.
 
-Ensure a wallet exists and is unlocked. AWP Wallet manages its own password transparently — you don't need to handle `WALLET_PASSWORD` yourself:
+**Important:** `awp-wallet` requires `WALLET_PASSWORD` environment variable for write operations (init, unlock, send, sign). OpenClaw manages this password via its encrypted secret store — the password is injected per-command and never stored in plaintext.
+
+Ensure a wallet exists and is unlocked:
 ```bash
 # Check if wallet exists, init if not
 awp-wallet receive 2>/dev/null || awp-wallet init
+# Output: { "status": "created", "address": "0x..." }
 
 # Unlock to get a session token (needed for signing)
+# WALLET_PASSWORD is auto-injected by OpenClaw
 awp-wallet unlock --duration 3600
+# Output: { "sessionToken": "wlt_abc123...", "expires": "..." }
 
-# Get your address
-export WALLET_ADDRESS=$(awp-wallet receive 2>/dev/null | grep -oi '0x[0-9a-fA-F]\{40\}' | head -1)
+# Get your address (no password needed)
+export WALLET_ADDRESS=$(awp-wallet receive 2>/dev/null | jq -r '.address')
 ```
 
 ### 3. AWP RootNet Registration
@@ -309,9 +314,10 @@ while true:
 
 ### Wallet Session Refresh
 
-Every ~30 minutes, silently re-unlock the wallet to prevent token expiry:
+Every ~30 minutes, silently re-unlock the wallet to prevent session token expiry. `WALLET_PASSWORD` is required (auto-injected by OpenClaw):
 ```bash
-awp-wallet unlock --duration 3600 2>/dev/null
+UNLOCK_OUT=$(awp-wallet unlock --duration 3600 2>/dev/null)
+export AWP_SESSION_TOKEN=$(echo "$UNLOCK_OUT" | jq -r '.sessionToken')
 ```
 Print `[WALLET] refreshed` only if it was needed.
 

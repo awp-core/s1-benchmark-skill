@@ -22,23 +22,33 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASEDIR="$(dirname "$SCRIPT_DIR")"
 LOGFILE="/tmp/awp_worker.log"
 
-# 自动检测 awp-wallet 路径（OpenClaw 可能不在 $PATH 中）
-_AWP_BIN="awp-wallet"
-AWP_WALLET=""
-for candidate in \
-  "$HOME/.local/bin/$_AWP_BIN" \
-  "$HOME/.awp/bin/$_AWP_BIN" \
-  "/usr/local/bin/$_AWP_BIN" \
-  "$(command -v "$_AWP_BIN" 2>/dev/null)"; do
-  if [ -n "$candidate" ] && [ -x "$candidate" ]; then
-    AWP_WALLET="$candidate"
-    break
+# 自动检测 awp-wallet 路径（OpenClaw 的 npm link 可能装在不同位置）
+if [ -z "${AWP_WALLET:-}" ]; then
+  _AWP_BIN="awp-wallet"
+  for candidate in \
+    "/usr/bin/$_AWP_BIN" \
+    "/usr/local/bin/$_AWP_BIN" \
+    "$HOME/.local/bin/$_AWP_BIN" \
+    "$HOME/.awp/bin/$_AWP_BIN" \
+    "$(command -v "$_AWP_BIN" 2>/dev/null)"; do
+    if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+      AWP_WALLET="$candidate"
+      break
+    fi
+  done
+fi
+# 最后尝试 node 直接运行
+if [ -z "${AWP_WALLET:-}" ]; then
+  _NODE_ENTRY="/usr/lib/node_modules/awp-wallet/scripts/wallet-cli.js"
+  if [ -f "$_NODE_ENTRY" ]; then
+    AWP_WALLET="node $_NODE_ENTRY"
   fi
-done
-if [ -z "$AWP_WALLET" ]; then
-  echo "[!] $_AWP_BIN not found. Install it or set AWP_WALLET_PATH." >&2
+fi
+if [ -z "${AWP_WALLET:-}" ]; then
+  echo "[!] awp-wallet not found. Install it or set AWP_WALLET env var." >&2
   exit 1
 fi
+export AWP_WALLET  # 导出给 benchmark-sign.sh 使用
 
 PENDING_Q="/tmp/awp_q_pending.json"
 ANSWER_FILE="/tmp/awp_answer.json"
@@ -67,10 +77,33 @@ sign() {
 }
 
 refresh_token() {
-  $AWP_WALLET unlock --duration 3600 >/dev/null 2>&1 || true
-  export WALLET_ADDRESS=$($AWP_WALLET receive 2>/dev/null | grep -oi '0x[0-9a-fA-F]\{40\}' | head -1)
+  # unlock 需要 WALLET_PASSWORD（由 OpenClaw secret store 注入到环境变量）
+  UNLOCK_OUT=$($AWP_WALLET unlock --duration 3600 2>/dev/null) || UNLOCK_OUT=""
+
+  # 解析 sessionToken（awp-wallet 输出 JSON: {"sessionToken":"wlt_xxx", ...}）
+  local token
+  token=$(echo "$UNLOCK_OUT" | jq -r '.sessionToken // empty' 2>/dev/null)
+  if [ -z "$token" ]; then
+    # 兼容旧版输出格式
+    token=$(echo "$UNLOCK_OUT" | grep -o '"sessionToken":"[^"]*"' | head -1 | cut -d'"' -f4)
+  fi
+  if [ -n "$token" ]; then
+    export AWP_SESSION_TOKEN="$token"
+  fi
+
+  # 解析钱包地址（receive 输出 JSON: {"address":"0x...", ...}）
+  RECV_OUT=$($AWP_WALLET receive 2>/dev/null) || RECV_OUT=""
+  local addr
+  addr=$(echo "$RECV_OUT" | jq -r '.address // empty' 2>/dev/null)
+  if [ -z "$addr" ]; then
+    addr=$(echo "$RECV_OUT" | grep -oi '0x[0-9a-fA-F]\{40\}' | head -1)
+  fi
+  if [ -n "$addr" ]; then
+    export WALLET_ADDRESS="$addr"
+  fi
+
   LAST_TOKEN_REFRESH=$(date +%s)
-  log "[TOKEN] wallet session refreshed"
+  log "[TOKEN] wallet session refreshed (addr=${WALLET_ADDRESS:-unknown})"
 }
 
 # Parse ISO 8601 / RFC 3339 timestamp to epoch seconds
@@ -109,6 +142,7 @@ log "=== Benchmark Worker started ==="
 log "    BASEDIR=$BASEDIR"
 log "    API=$BENCHMARK_API_URL"
 log "    WALLET=$WALLET_ADDRESS"
+log "    AWP_WALLET=$AWP_WALLET"
 
 # ── main loop ───────────────────────────────────────────────
 
