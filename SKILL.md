@@ -147,7 +147,7 @@ cat > /tmp/benchmark-worker-config.json << 'CONF'
 {
   "notify_channel": "<detected_channel>",
   "notify_target": "<detected_target>",
-  "notify_mode": "summary",
+  "notify_mode": "realtime",
   "notify_interval": 300
 }
 CONF
@@ -157,8 +157,8 @@ Replace `<detected_channel>` and `<detected_target>` with actual values from you
 session context. If you cannot determine the channel, write empty strings — the
 worker will run silently and the user can configure later.
 
-Ask the user: "Notifications are set to **summary** (every 5 minutes). Want
-**realtime** (every action) or **silent** instead?"
+Ask the user: "Notifications are set to **realtime** (every action). Want
+**summary** (every 5 minutes) or **silent** instead?"
 
 Verify it started:
 ```bash
