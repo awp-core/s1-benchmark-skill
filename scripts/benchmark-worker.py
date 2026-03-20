@@ -41,6 +41,11 @@ STATUS_FILE: str = os.environ.get(
 )
 TASK_DIR: str = os.environ.get("BENCHMARK_TASK_DIR", "/tmp/benchmark-tasks")
 OPENCLAW_AGENT: str = os.environ.get("OPENCLAW_AGENT", "")  # auto-detected at startup
+NOTIFY_CHANNEL: str = os.environ.get("NOTIFY_CHANNEL", "")  # e.g. "telegram"
+NOTIFY_TARGET: str = os.environ.get("NOTIFY_TARGET", "")  # e.g. chat_id
+NOTIFY_INTERVAL: int = int(
+    os.environ.get("NOTIFY_INTERVAL", "300")
+)  # seconds between notifications
 CLI_TIMEOUT: int = 120  # max seconds for a single CLI call
 
 # ---------------------------------------------------------------------------
@@ -723,14 +728,66 @@ def _cleanup_stale_files() -> None:
             pass
 
 
+def _notify_user(message: str) -> None:
+    """Send a notification to the user via openclaw message send."""
+    if not NOTIFY_CHANNEL or not NOTIFY_TARGET:
+        return
+    try:
+        subprocess.run(
+            [
+                "openclaw",
+                "message",
+                "send",
+                "--channel",
+                NOTIFY_CHANNEL,
+                "--target",
+                NOTIFY_TARGET,
+                "--message",
+                message,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        log.warning("[NOTIFY] failed to send notification")
+
+
+def _build_status_summary() -> str:
+    """Build a one-line status summary for notifications."""
+    uptime = int(time.monotonic() - _start_time)
+    hours, remainder = divmod(uptime, 3600)
+    minutes = remainder // 60
+    ai = _stats.get("answers_ai", 0)
+    fb = _stats.get("answers_fallback", 0)
+    total = _stats["answers"]
+    asked = _stats["questions_asked"]
+    errors = _stats["errors"]
+    parts = [
+        f"Answers: {total} ({ai} ai / {fb} fallback)",
+        f"Questions: {asked}",
+        f"Errors: {errors}",
+        f"Uptime: {hours}h {minutes}m",
+    ]
+    if total > 0 and fb > ai:
+        parts.append("⚠ high fallback ratio")
+    return "[Benchmark] " + " | ".join(parts)
+
+
 def run_loop() -> None:
     """Main worker loop: poll -> answer or ask -> repeat."""
     last_unlock = time.monotonic()
     last_cleanup = time.monotonic()
     last_cli_probe = time.monotonic()
     last_ask = 0.0  # trigger ask on first opportunity
+    last_notify = time.monotonic()
 
     while running:
+        # -- Periodic notification to user -----------------------------------
+        if NOTIFY_CHANNEL and time.monotonic() - last_notify >= NOTIFY_INTERVAL:
+            _notify_user(_build_status_summary())
+            last_notify = time.monotonic()
+
         # -- Periodic cleanup of stale task files ----------------------------
         if time.monotonic() - last_cleanup > 120:  # every 2 minutes
             _cleanup_stale_files()
