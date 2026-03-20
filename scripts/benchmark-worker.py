@@ -32,7 +32,7 @@ POLL_SLEEP: int = 5  # seconds between idle polls
 NET_RETRY_SLEEP: int = 10  # seconds after network error
 SUSPEND_SLEEP: int = 60  # seconds when suspended
 UNLOCK_INTERVAL: int = 25 * 60  # re-unlock every 25 minutes
-ASK_EVERY_N: int = 6  # ask a question every N idle polls
+ASK_INTERVAL: int = 60  # seconds between question submissions (API rate limit: 1/min)
 TASK_WAIT_TIMEOUT: int = 180  # max seconds to wait for agent response (> cron interval)
 TASK_POLL_INTERVAL: int = 2  # seconds between checks for agent response
 
@@ -725,11 +725,10 @@ def _cleanup_stale_files() -> None:
 
 def run_loop() -> None:
     """Main worker loop: poll -> answer or ask -> repeat."""
-    counter = 0
-    answer_count = 0
     last_unlock = time.monotonic()
     last_cleanup = time.monotonic()
     last_cli_probe = time.monotonic()
+    last_ask = 0.0  # trigger ask on first opportunity
 
     while running:
         # -- Periodic cleanup of stale task files ----------------------------
@@ -793,18 +792,17 @@ def run_loop() -> None:
         # -- Answer -----------------------------------------------------------
         if assigned:
             _handle_answer(assigned)
-            answer_count += 1
-            # After every N answers, try to ask a question (non-blocking)
-            if answer_count % ASK_EVERY_N == 0:
-                log.info("[ASK] triggered after %d answers", answer_count)
+            # After answering, check if it's time to ask (non-blocking)
+            if time.monotonic() - last_ask >= ASK_INTERVAL:
                 _handle_ask()
+                last_ask = time.monotonic()
             # No sleep — immediately poll again
             continue
 
         # -- Ask (on idle) ----------------------------------------------------
-        counter += 1
-        if counter % ASK_EVERY_N == 0:
+        if time.monotonic() - last_ask >= ASK_INTERVAL:
             _handle_ask()
+            last_ask = time.monotonic()
         _interruptible_sleep(POLL_SLEEP)
 
     log.info("[EXIT] worker stopped")
