@@ -35,6 +35,9 @@ CLI_TIMEOUT: int = 120  # max seconds for a single openclaw agent CLI call
 STATUS_FILE: str = os.environ.get(
     "BENCHMARK_STATUS_FILE", "/tmp/benchmark-worker-status.json"
 )
+HISTORY_FILE: str = os.environ.get(
+    "BENCHMARK_HISTORY_FILE", "/tmp/benchmark-worker-history.jsonl"
+)
 OPENCLAW_AGENT: str = os.environ.get("OPENCLAW_AGENT", "")  # auto-detected at startup
 CONFIG_FILE: str = os.environ.get(
     "BENCHMARK_CONFIG_FILE", "/tmp/benchmark-worker-config.json"
@@ -124,6 +127,16 @@ def _write_status() -> None:
         os.replace(tmp, STATUS_FILE)
     except OSError as e:
         log.warning("[STATUS] failed to write status file: %s", e)
+
+
+def _log_history(entry: dict) -> None:
+    """Append a full Q&A record to the JSONL history file."""
+    entry["time"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    try:
+        with open(HISTORY_FILE, "a") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
 
 
 def _record_action(action: str) -> None:
@@ -521,6 +534,17 @@ def _handle_answer(assigned: dict) -> None:
     if status == "ERR":
         _stats["errors"] += 1
     _record_action(action)
+    _log_history(
+        {
+            "type": "answer",
+            "question_id": qid,
+            "question": question_text,
+            "answer": answer,
+            "valid": valid,
+            "source": "fallback" if is_fallback else "ai",
+            "status": status,
+        }
+    )
     _notify_action(
         action,
         {
@@ -580,6 +604,15 @@ def _handle_ask() -> None:
             log.info("%s", action)
             _stats["questions_asked"] += 1
             _record_action(action)
+            _log_history(
+                {
+                    "type": "ask",
+                    "question_id": new_id,
+                    "bs_id": bs_id,
+                    "question": question,
+                    "answer": answer,
+                }
+            )
             _notify_action(action, {"type": "ask", "question": question})
         else:
             log.warning("[ASK] err: %s", rdata.get("error", "unknown"))
