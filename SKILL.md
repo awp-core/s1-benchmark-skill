@@ -178,14 +178,19 @@ If "not registered":
 
 ### Step 4: Start Worker + Notifications
 
+The worker auto-generates an instance ID from the wallet address (last 6 hex chars).
+All files and agent names are suffixed with this ID, so multiple workers on the same
+machine don't conflict. You can also set `BENCHMARK_INSTANCE_ID` explicitly.
+
 ```bash
-export OPENCLAW_AGENT="benchmark-worker"
+# No need to set INSTANCE_ID — auto-derived from wallet address
 nohup python3 {baseDir}/scripts/benchmark-worker.py >> /tmp/benchmark-worker.log 2>&1 &
 WORKER_PID=$!
 sleep 3
 
-# Auto-configure notifications from session context
-cat > /tmp/benchmark-worker-config.json << EOF
+# Read the instance ID from status file to configure notifications
+INSTANCE_ID=$(jq -r '.address' /tmp/benchmark-worker-*-status.json 2>/dev/null | head -1 | grep -o '.\{6\}$')
+cat > "/tmp/benchmark-worker-${INSTANCE_ID}-config.json" << EOF
 {
   "notify_channel": "<detected_channel>",
   "notify_target": "<detected_target>",
@@ -199,7 +204,7 @@ EOF
 
 ```
 [1/4] wallet       <short_address> ✓
-[2/4] agent        benchmark-worker ✓
+[2/4] agent        benchmark-worker-<instance_id> ✓
 [3/4] api          connected ✓
 [4/4] notifications  realtime via <channel> ✓
 
@@ -292,10 +297,11 @@ kill "$PID" 2>/dev/null && echo "Worker stopped" || echo "Not running"
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `BENCHMARK_API_URL` | `https://tapis1.awp.sh` | Benchmark subnet API |
-| `BENCHMARK_STATUS_FILE` | `/tmp/benchmark-worker-status.json` | Shared status file |
-| `BENCHMARK_HISTORY_FILE` | `/tmp/benchmark-worker-history.jsonl` | Full Q&A history |
-| `BENCHMARK_CONFIG_FILE` | `/tmp/benchmark-worker-config.json` | Runtime config |
-| `OPENCLAW_AGENT` | `benchmark-worker` | Dedicated agent ID |
+| `BENCHMARK_INSTANCE_ID` | _(wallet last 6 hex)_ | Instance ID for multi-worker isolation |
+| `BENCHMARK_STATUS_FILE` | `/tmp/benchmark-worker-<id>-status.json` | Shared status file |
+| `BENCHMARK_HISTORY_FILE` | `/tmp/benchmark-worker-<id>-history.jsonl` | Full Q&A history |
+| `BENCHMARK_CONFIG_FILE` | `/tmp/benchmark-worker-<id>-config.json` | Runtime config |
+| `OPENCLAW_AGENT` | `benchmark-worker-<id>` | Dedicated agent ID |
 | `NOTIFY_MODE` | `realtime` | `realtime` / `summary` / `silent` |
 | `NOTIFY_INTERVAL` | `300` | Summary interval in seconds |
 
