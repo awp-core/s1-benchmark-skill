@@ -129,21 +129,17 @@ Gateway's internal RPC — no HTTP endpoints or CLI workarounds needed.
 # Remove old cron job if exists
 openclaw cron remove benchmark-tasks 2>/dev/null || true
 
-# Add new cron job: every minute
+# Add new cron job: every minute, no delivery (avoids Telegram resolve errors + backoff)
 openclaw cron add \
   --name "benchmark-tasks" \
   --cron "* * * * *" \
-  --announce \
+  --no-deliver \
   --message "Run {baseDir}/scripts/process-tasks.sh and follow the instructions in {baseDir}/SKILL.md Process Tasks section."
 ```
 
-If `--announce` causes errors, try without it:
-```bash
-openclaw cron add \
-  --name "benchmark-tasks" \
-  --cron "* * * * *" \
-  --message "Run {baseDir}/scripts/process-tasks.sh and follow the instructions in {baseDir}/SKILL.md Process Tasks section."
-```
+**Do NOT use `--announce` or `--deliver`** — these attempt to send the cron output via
+Telegram, and if the chat ID can't be resolved the cron is marked as error and enters
+backoff, causing subsequent tasks to timeout and fallback.
 
 Check cron status and recent errors:
 ```bash
@@ -326,9 +322,10 @@ If restart fails 3 times within 10 minutes, stop and alert the user.
 # Check error details
 openclaw cron runs benchmark-tasks
 
-# Recreate the cron job
+# Common cause: --announce/--deliver causes "Telegram recipient could not be resolved"
+# which marks cron as error and triggers backoff. Fix: recreate with --no-deliver
 openclaw cron remove benchmark-tasks
-openclaw cron add --name "benchmark-tasks" --cron "* * * * *" \
+openclaw cron add --name "benchmark-tasks" --cron "* * * * *" --no-deliver \
   --message "Run {baseDir}/scripts/process-tasks.sh and follow {baseDir}/SKILL.md Process Tasks section."
 ```
 
