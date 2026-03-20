@@ -6,9 +6,9 @@ description: >
   the full lifecycle: wallet setup, worker launch, status monitoring, stopping,
   restarting, notification config, and viewing scores/logs/history. Use this
   skill when the user wants to participate in the Benchmark Subnet in any way:
-  starting/stopping work ("start working", "go online", "上线", "开始工作",
-  "stop working"), checking worker status ("awp status", "is the worker running",
-  "worker 挂了"), viewing benchmark scores/rewards, managing notifications, or
+  starting/stopping work ("start working", "go online", "stop working"),
+  checking worker status ("awp status", "is the worker running"),
+  viewing benchmark scores/rewards, managing notifications, or
   inspecting answered/asked questions. This skill does NOT handle AWP wallet
   operations (sending tokens, checking balances) or AWP RootNet operations
   (staking, governance, registration) — those belong to the AWP skills. It also
