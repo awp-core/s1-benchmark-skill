@@ -416,6 +416,10 @@ def call_agent(prompt: str, timeout: float = CLI_TIMEOUT) -> str | None:
     stdout = proc.stdout.read() if proc.stdout else ""
     stderr = proc.stderr.read() if proc.stderr else ""
 
+    # Clean up the session file to prevent context accumulation.
+    # OpenClaw stores sessions at ~/.openclaw/agents/<id>/sessions/<sid>.jsonl
+    _cleanup_session(session_id)
+
     if proc.returncode == 0 and stdout.strip():
         text = stdout.strip()
         # Try to extract from JSON if the response is structured
@@ -441,6 +445,22 @@ def call_agent(prompt: str, timeout: float = CLI_TIMEOUT) -> str | None:
 
     log.warning("[AGENT] CLI failed (exit %d)", proc.returncode)
     return None
+
+
+def _cleanup_session(session_id: str) -> None:
+    """Delete the session transcript file to prevent context accumulation.
+
+    OpenClaw sessions are append-only. Without cleanup, each session's
+    JSONL file grows indefinitely and eventually triggers Anthropic's
+    long-context rate limit.
+    """
+    session_dir = os.path.expanduser(f"~/.openclaw/agents/{_agent_id}/sessions")
+    transcript = os.path.join(session_dir, f"{session_id}.jsonl")
+    try:
+        if os.path.exists(transcript):
+            os.unlink(transcript)
+    except OSError:
+        pass
 
 
 def _extract_text_from_agent_response(data: dict) -> str | None:
