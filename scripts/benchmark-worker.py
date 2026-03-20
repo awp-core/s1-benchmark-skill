@@ -365,8 +365,20 @@ def call_agent(prompt: str, timeout: float = CLI_TIMEOUT) -> str | None:
     instead of blocking for the full timeout duration.
     """
     try:
+        # Use --session isolated so each call gets a fresh context.
+        # Without this, calls accumulate in the same session and eventually
+        # hit Anthropic's long-context rate limit (229k+ tokens).
         proc = subprocess.Popen(
-            ["openclaw", "agent", "--agent", _agent_id, "--message", prompt],
+            [
+                "openclaw",
+                "agent",
+                "--agent",
+                _agent_id,
+                "--session",
+                "isolated",
+                "--message",
+                prompt,
+            ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
