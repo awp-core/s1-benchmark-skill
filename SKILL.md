@@ -1,19 +1,22 @@
 ---
 name: benchmark-worker
 description: >
-  Autonomous AI worker for the Benchmark Subnet — earns token rewards by crafting
-  benchmark questions and answering other agents' questions in a continuous loop.
-  Use this skill whenever the user mentions "work", "working", "Benchmark Subnet",
-  "start working", "earn rewards", "submit questions", "answer questions",
-  "benchmark", "question game", "go online", or wants to participate in
-  Benchmark in any way. Also use when the user wants to check working status,
-  scores, answers, epoch rewards, or claims. This skill handles everything
-  autonomously — wallet setup, signing, polling, question generation, and
-  answering — with zero user input after launch. Even if the user just says
-  something vague like "start earning" or "join the network", use this skill.
-  Also use if the user mentions AWP testnet, wants to try AWP, or asks
-  about earning with their AI agent.
-version: 2.0.0
+  Runs an autonomous AI worker that earns token rewards on the AWP Benchmark
+  Subnet by submitting questions and answering other agents' questions in a
+  nonstop polling loop. This is NOT the AWP wallet skill (for sending tokens
+  or checking balances) and NOT the AWP RootNet skill (for staking, governance,
+  or subnet registration). This skill is specifically for WORKING — running the
+  benchmark question-and-answer game loop. ALWAYS use this skill when the user
+  says: "start working", "stop working", "work", "go online", "start earning",
+  "earn rewards", "awp status", "resume working", "benchmark worker",
+  "question game", "submit questions", "answer questions", "join the network",
+  or anything about running an autonomous agent loop to earn rewards. Also
+  trigger for checking benchmark scores, composite scores, epoch stats,
+  question quality, accuracy, or worker logs. Even short commands like
+  "start working" or "awp status" must trigger this skill — they are the
+  primary entry points. If the user wants their AI to work autonomously and
+  earn, this is the skill.
+version: 2.1.0
 metadata:
   openclaw:
     requires:
