@@ -221,9 +221,6 @@ def signed_request(method: str, path: str, body: str = "") -> str:
 # ---------------------------------------------------------------------------
 
 _agent_id: str = ""  # detected at startup
-_cli_available: bool = True  # set to False after repeated failures
-_cli_fail_count: int = 0
-_CLI_FAIL_THRESHOLD: int = 3  # disable CLI after this many consecutive failures
 
 
 def detect_agent() -> str:
@@ -274,30 +271,11 @@ def detect_agent() -> str:
     return _agent_id
 
 
-def _probe_cli() -> bool:
-    """Quick probe to check if openclaw agent CLI is responsive."""
-    try:
-        result = subprocess.run(
-            ["openclaw", "agent", "--agent", _agent_id, "--message", "ping"],
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-        return result.returncode == 0 and result.stdout.strip() != ""
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        return False
-
-
 def call_agent(prompt: str, timeout: float = CLI_TIMEOUT) -> str | None:
     """Call OpenClaw agent via CLI. Returns text response or None on failure.
 
-    This is the fast path — direct synchronous call, no file queue.
+    Always attempts the call — never skips based on previous failures.
     """
-    global _cli_available, _cli_fail_count
-
-    if not _cli_available:
-        return None
-
     try:
         result = subprocess.run(
             ["openclaw", "agent", "--agent", _agent_id, "--message", prompt],
@@ -306,12 +284,10 @@ def call_agent(prompt: str, timeout: float = CLI_TIMEOUT) -> str | None:
             timeout=int(timeout) + 10,
         )
         if result.returncode == 0 and result.stdout.strip():
-            _cli_fail_count = 0  # reset on success
             text = result.stdout.strip()
             # Try to extract from JSON if the response is structured
             try:
                 data = json.loads(text)
-                # If it's a structured response, return the text content
                 if isinstance(data, dict) and "output" in data:
                     extracted = _extract_text_from_agent_response(data)
                     if extracted:
@@ -320,33 +296,13 @@ def call_agent(prompt: str, timeout: float = CLI_TIMEOUT) -> str | None:
                 pass
             return text
         # CLI returned error
-        _cli_fail_count += 1
         if result.stderr.strip():
             log.warning("[AGENT] CLI stderr: %s", result.stderr.strip()[:200])
-        log.warning(
-            "[AGENT] CLI failed (exit %d, fail %d/%d)",
-            result.returncode,
-            _cli_fail_count,
-            _CLI_FAIL_THRESHOLD,
-        )
+        log.warning("[AGENT] CLI failed (exit %d)", result.returncode)
     except subprocess.TimeoutExpired:
-        _cli_fail_count += 1
-        log.warning(
-            "[AGENT] CLI timeout (fail %d/%d)",
-            _cli_fail_count,
-            _CLI_FAIL_THRESHOLD,
-        )
+        log.warning("[AGENT] CLI timeout (%ds)", int(timeout))
     except FileNotFoundError:
-        log.warning("[AGENT] 'openclaw' command not found, disabling CLI")
-        _cli_available = False
-        return None
-
-    # Disable CLI after too many consecutive failures
-    if _cli_fail_count >= _CLI_FAIL_THRESHOLD:
-        log.warning(
-            "[AGENT] CLI disabled after %d consecutive failures", _cli_fail_count
-        )
-        _cli_available = False
+        log.warning("[AGENT] 'openclaw' command not found")
     return None
 
 
@@ -363,20 +319,6 @@ def _extract_text_from_agent_response(data: dict) -> str | None:
         msg = choices[0].get("message", {})
         return msg.get("content")
     return None
-
-
-def re_enable_cli() -> None:
-    """Periodically try to re-enable CLI if it was disabled."""
-    global _cli_available, _cli_fail_count
-    if _cli_available:
-        return
-    log.info("[AGENT] probing CLI availability...")
-    if _probe_cli():
-        _cli_available = True
-        _cli_fail_count = 0
-        log.info("[AGENT] CLI re-enabled")
-    else:
-        log.info("[AGENT] CLI still unavailable")
 
 
 # ---------------------------------------------------------------------------
@@ -600,13 +542,12 @@ def _handle_ask() -> None:
     prompt = build_question_prompt(chosen)
     response: dict | None = None
 
-    # Try CLI first (fast, synchronous)
-    if _cli_available:
-        cli_text = call_agent(prompt, timeout=CLI_TIMEOUT)
-        if cli_text:
-            response = parse_json_response(cli_text)
-            if response:
-                log.info("[ASK] got CLI response")
+    # Try CLI
+    cli_text = call_agent(prompt, timeout=CLI_TIMEOUT)
+    if cli_text:
+        response = parse_json_response(cli_text)
+        if response:
+            log.info("[ASK] got CLI response")
 
     # CLI failed — skip, will retry next minute
     if not response or "question" not in response or "answer" not in response:
@@ -801,7 +742,6 @@ def _format_stats_line() -> str:
 def run_loop() -> None:
     """Main worker loop: poll -> answer or ask -> repeat."""
     last_unlock = time.monotonic()
-    last_cli_probe = time.monotonic()
     last_ask = 0.0  # trigger ask on first opportunity
     last_notify = time.monotonic()
 
@@ -812,11 +752,6 @@ def run_loop() -> None:
         if cfg["notify_channel"] and time.monotonic() - last_notify >= interval:
             _notify_summary()
             last_notify = time.monotonic()
-
-        # -- Periodically try to re-enable CLI if disabled -------------------
-        if time.monotonic() - last_cli_probe > 300:  # every 5 minutes
-            re_enable_cli()
-            last_cli_probe = time.monotonic()
 
         # -- Wallet refresh --------------------------------------------------
         if time.monotonic() - last_unlock > UNLOCK_INTERVAL:
@@ -949,18 +884,9 @@ def main() -> None:
     short_addr = f"{address[:6]}...{address[-4:]}"
     log.info("[SETUP] wallet %s | api connected | ready", short_addr)
 
-    # 4. Detect OpenClaw agent and probe CLI
+    # 4. Detect OpenClaw agent
     agent_id = detect_agent()
-    cli_ok = _probe_cli()
-    log.info(
-        "[SETUP] agent: %s | CLI: %s",
-        agent_id,
-        "available" if cli_ok else "unavailable",
-    )
-    if not cli_ok:
-        global _cli_available
-        _cli_available = False
-        log.warning("[SETUP] CLI unavailable — answers will fallback to 'unknown'")
+    log.info("[SETUP] agent: %s", agent_id)
 
     print(json.dumps({"ok": True, "message": "worker started", "address": address}))
 
