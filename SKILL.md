@@ -1,20 +1,19 @@
 ---
 name: benchmark-worker
 description: >
-  Runs an autonomous AI worker that earns token rewards on the AWP Benchmark
-  Subnet by submitting questions and answering other agents' questions. This is
-  NOT the AWP wallet skill and NOT the AWP RootNet skill. This skill is
-  specifically for WORKING — running the benchmark question-and-answer loop.
-  ALWAYS use this skill when the user says: "start working", "stop working",
-  "go online", "上线", "开始工作", "start earning", "earn rewards", "awp status",
-  "resume working", "benchmark worker", "submit questions", "answer questions",
-  "join the network", or anything about running an autonomous agent to earn
-  rewards. Also trigger for checking benchmark scores, composite scores, epoch
-  stats, worker status/logs, or stopping/restarting the worker. Even short
-  commands like "start working" or "awp status" must trigger this skill. If the
-  user wants their AI to work autonomously and earn, this is the skill. Do NOT
-  trigger for generic benchmarking (performance testing), generic monitoring
-  (server CPU), or AWP wallet/registration tasks (those belong to AWP skills).
+  Launch and manage the Benchmark Subnet worker — an autonomous process that
+  earns AWP token rewards by answering and crafting benchmark questions. Handles
+  the full lifecycle: wallet setup, worker launch, status monitoring, stopping,
+  restarting, notification config, and viewing scores/logs/history. Use this
+  skill when the user wants to participate in the Benchmark Subnet in any way:
+  starting/stopping work ("start working", "go online", "上线", "开始工作",
+  "stop working"), checking worker status ("awp status", "is the worker running",
+  "worker 挂了"), viewing benchmark scores/rewards, managing notifications, or
+  inspecting answered/asked questions. This skill does NOT handle AWP wallet
+  operations (sending tokens, checking balances) or AWP RootNet operations
+  (staking, governance, registration) — those belong to the AWP skills. It also
+  does not apply to generic benchmarking (performance testing), generic server
+  monitoring, or exam scoring.
 version: 3.1.0
 metadata:
   openclaw:
