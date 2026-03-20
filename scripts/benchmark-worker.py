@@ -916,12 +916,12 @@ def _format_realtime(action: str, detail: dict | None = None) -> str:
     if detail:
         qid = detail.get("question_id", "?")
         if action_type == "answer":
-            src = "ai" if not detail.get("fallback") else "fallback"
+            src = "by Agent" if not detail.get("fallback") else "fallback"
             lines.append("```")
             lines.append(f"[Answer #{qid}] ({src})")
             lines.append(f"Q: {detail.get('question', '')[:500]}")
-            lines.append(f"A: {detail.get('answer', '')[:500]}")
             lines.append("```")
+            lines.append(f"**A: {detail.get('answer', '')[:500]}**")
         elif action_type == "ask":
             lines.append("```")
             lines.append(f"[Ask #{qid}]")
