@@ -33,8 +33,7 @@ NET_RETRY_SLEEP: int = 10  # seconds after network error
 SUSPEND_SLEEP: int = 60  # seconds when suspended
 UNLOCK_INTERVAL: int = 25 * 60  # re-unlock every 25 minutes
 ASK_INTERVAL: int = 60  # seconds between question submissions (API rate limit: 1/min)
-ANSWER_CLI_TIMEOUT: int = 60  # seconds per CLI attempt for answering
-ANSWER_MAX_RETRIES: int = 1  # retry once if first attempt fails
+ANSWER_CLI_TIMEOUT: int = 120  # seconds for CLI answering (single attempt)
 ASK_QUEUE_TIMEOUT: int = (
     300  # max seconds for ask task in file queue (not time-critical)
 )
@@ -542,54 +541,41 @@ def _interruptible_sleep(seconds: int) -> None:
 def _handle_answer(assigned: dict) -> None:
     """Answer an assigned question via CLI. No file queue — time-critical.
 
-    Strategy: CLI call with fixed timeout, retry once if failed.
-    If both attempts fail, submit "unknown" immediately.
+    Single CLI call with 120s timeout. If it fails, submit "unknown".
     A wrong answer (score 3) always beats a timeout (score 0).
     """
     qid = assigned.get("question_id", "?")
     question_text = assigned.get("question", "")
     log.info('[Q#%s] "%s"', qid, question_text[:60])
 
-    # Calculate per-attempt timeout from deadline
-    per_attempt = float(ANSWER_CLI_TIMEOUT)
+    # Calculate timeout from deadline (cap at ANSWER_CLI_TIMEOUT)
+    timeout = float(ANSWER_CLI_TIMEOUT)
     reply_ddl = assigned.get("reply_ddl", "")
     if reply_ddl:
         try:
             deadline_dt = datetime.fromisoformat(reply_ddl.replace("Z", "+00:00"))
             remaining = (deadline_dt - datetime.now(timezone.utc)).total_seconds() - 15
-            # Split remaining time across attempts (with buffer)
-            max_per = remaining / (ANSWER_MAX_RETRIES + 1)
-            per_attempt = min(max(max_per, 20), float(ANSWER_CLI_TIMEOUT))
+            timeout = min(max(remaining, 20), float(ANSWER_CLI_TIMEOUT))
         except (ValueError, TypeError):
             pass
 
     prompt = build_answer_prompt(assigned)
     response: dict | None = None
 
-    # Try CLI call, with retries
-    for attempt in range(ANSWER_MAX_RETRIES + 1):
-        cli_text = call_agent(prompt, timeout=per_attempt)
-        if cli_text:
-            response = parse_json_response(cli_text)
-            if response:
-                log.info("[A#%s] got CLI response (attempt %d)", qid, attempt + 1)
-                break
-        if attempt < ANSWER_MAX_RETRIES:
-            log.info("[A#%s] attempt %d failed, retrying...", qid, attempt + 1)
-        else:
-            log.warning("[A#%s] all %d attempts failed", qid, attempt + 1)
+    # Single CLI call
+    cli_text = call_agent(prompt, timeout=timeout)
+    if cli_text:
+        response = parse_json_response(cli_text)
+        if response:
+            log.info("[A#%s] got CLI response", qid)
 
     is_fallback = False
     if response and "answer" in response:
         valid = bool(response.get("valid", True))
         answer = str(response["answer"])
     else:
-        # Fallback: wrong answer beats timeout
         log.warning(
-            "[A#%s] no agent response (%d attempts x %.0fs), submitting fallback",
-            qid,
-            ANSWER_MAX_RETRIES + 1,
-            per_attempt,
+            "[A#%s] no response (%.0fs timeout), submitting fallback", qid, timeout
         )
         valid, answer = True, "unknown"
         is_fallback = True
