@@ -295,7 +295,8 @@ def signed_request(method: str, path: str, body: str = "") -> str:
 # ---------------------------------------------------------------------------
 
 _agent_id: str = ""  # detected at startup
-_session_counter: int = 0  # rotating session pool counter
+_session_counter: int = 0  # unique session counter
+_rate_limit_until: float = 0  # monotonic time until rate limit backoff ends
 
 
 def detect_agent() -> str:
@@ -365,6 +366,14 @@ def call_agent(prompt: str, timeout: float = CLI_TIMEOUT) -> str | None:
     Uses Popen so we can abort early if SIGTERM is received (running=False),
     instead of blocking for the full timeout duration.
     """
+    global _rate_limit_until
+
+    # Skip if we're in a rate limit backoff period
+    if time.monotonic() < _rate_limit_until:
+        remaining = int(_rate_limit_until - time.monotonic())
+        log.info("[AGENT] rate limit backoff, %ds remaining", remaining)
+        return None
+
     try:
         # Each call MUST use a unique session ID. Reusing a session-id
         # appends to the existing context (OpenClaw sessions are append-only).
@@ -420,8 +429,16 @@ def call_agent(prompt: str, timeout: float = CLI_TIMEOUT) -> str | None:
             pass
         return text
     # CLI returned error
-    if stderr.strip():
-        log.warning("[AGENT] CLI stderr: %s", stderr.strip()[:200])
+    err = stderr.strip() if stderr else ""
+    if err:
+        log.warning("[AGENT] CLI stderr: %s", err[:200])
+
+    # Detect Anthropic rate limit and back off
+    if "429" in err or "rate" in err.lower() or "Extra usage" in err:
+        backoff = 60
+        _rate_limit_until = time.monotonic() + backoff
+        log.warning("[AGENT] Anthropic rate limit detected, backing off %ds", backoff)
+
     log.warning("[AGENT] CLI failed (exit %d)", proc.returncode)
     return None
 

@@ -155,10 +155,11 @@ export WALLET_ADDRESS=$(awp-wallet receive 2>/dev/null | grep -oi '0x[0-9a-fA-F]
 ### Step 2: Dedicated Agent
 
 ```bash
+# Use haiku for lower cost and faster responses (simple Q&A doesn't need sonnet)
 openclaw agents list | grep -q benchmark-worker || \
   openclaw agents add benchmark-worker \
     --workspace ~/.openclaw/workspace-benchmark \
-    --model anthropic/claude-sonnet-4-6 \
+    --model anthropic/claude-haiku-4-5 \
     --non-interactive
 ```
 
