@@ -561,7 +561,15 @@ def _handle_answer(assigned: dict) -> None:
     if status == "ERR":
         _stats["errors"] += 1
     _record_action(action)
-    _notify_action(action)
+    _notify_action(
+        action,
+        {
+            "type": "answer",
+            "question": question_text,
+            "answer": answer,
+            "fallback": is_fallback,
+        },
+    )
     _write_status()
 
 
@@ -609,7 +617,7 @@ def _handle_ask() -> None:
             log.info("%s", action)
             _stats["questions_asked"] += 1
             _record_action(action)
-            _notify_action(action)
+            _notify_action(action, {"type": "ask", "question": question})
         else:
             log.warning("[ASK] err: %s", rdata.get("error", "unknown"))
             _stats["errors"] += 1
@@ -677,22 +685,85 @@ def _send_message(message: str) -> None:
         log.warning("[NOTIFY] failed to send message")
 
 
-def _notify_action(action: str) -> None:
+_last_notify_snapshot: dict[str, int] = {}  # stats snapshot at last summary
+
+
+def _notify_action(action: str, detail: dict | None = None) -> None:
     """Send per-action notification (only in realtime mode)."""
     cfg = _read_config()
-    if cfg["notify_mode"] == "realtime":
-        _send_message(action)
+    if cfg["notify_mode"] != "realtime":
+        return
+    msg = _format_realtime(action, detail)
+    _send_message(msg)
 
 
 def _notify_summary() -> None:
     """Send periodic summary notification (only in summary mode)."""
+    global _last_notify_snapshot
     cfg = _read_config()
-    if cfg["notify_mode"] == "summary":
-        _send_message(_build_status_summary())
+    if cfg["notify_mode"] != "summary":
+        return
+    msg = _format_summary()
+    _send_message(msg)
+    _last_notify_snapshot = {**_stats}
 
 
-def _build_status_summary() -> str:
-    """Build a one-line status summary for notifications."""
+def _format_realtime(action: str, detail: dict | None = None) -> str:
+    """Format a realtime notification with 3-section layout."""
+    lines: list[str] = []
+
+    # Section 1: Title
+    lines.append("*Subnet Benchmark Bot*")
+    lines.append("")
+
+    # Section 2: Action detail
+    if detail:
+        if detail.get("type") == "answer":
+            lines.append(f"Q: {detail.get('question', '')[:60]}...")
+            lines.append(
+                f"A: {detail.get('answer', '')[:60]}..."
+                f" ({'ai' if not detail.get('fallback') else 'fallback'})"
+            )
+        elif detail.get("type") == "ask":
+            lines.append(f"Asked: {detail.get('question', '')[:60]}...")
+    else:
+        lines.append(action)
+    lines.append("")
+
+    # Section 3: Stats
+    lines.append(_format_stats_block())
+    return "\n".join(lines)
+
+
+def _format_summary() -> str:
+    """Format a periodic summary with 3-section layout."""
+    lines: list[str] = []
+
+    # Section 1: Title
+    lines.append("*Subnet Benchmark Bot*")
+    lines.append("")
+
+    # Section 2: Recent actions (incremental, last 10)
+    recent = _recent_actions[-10:]
+    if recent:
+        prev_answers = _last_notify_snapshot.get("answers", 0)
+        prev_asked = _last_notify_snapshot.get("questions_asked", 0)
+        delta_a = _stats["answers"] - prev_answers
+        delta_q = _stats["questions_asked"] - prev_asked
+        lines.append(f"Recent: +{delta_a} answers, +{delta_q} questions")
+        for entry in recent:
+            lines.append(f"  {entry['action'][:70]}")
+    else:
+        lines.append("No recent activity")
+    lines.append("")
+
+    # Section 3: Stats
+    lines.append(_format_stats_block())
+    return "\n".join(lines)
+
+
+def _format_stats_block() -> str:
+    """Format the stats section (shared between realtime and summary)."""
     uptime = int(time.monotonic() - _start_time)
     hours, remainder = divmod(uptime, 3600)
     minutes = remainder // 60
@@ -701,15 +772,16 @@ def _build_status_summary() -> str:
     total = _stats["answers"]
     asked = _stats["questions_asked"]
     errors = _stats["errors"]
-    parts = [
-        f"Answers: {total} ({ai} ai / {fb} fallback)",
-        f"Questions: {asked}",
-        f"Errors: {errors}",
+    polls = _stats["polls"]
+
+    lines = [
+        f"Polls: {polls} | Answers: {total} ({ai} ai / {fb} fallback)",
+        f"Questions: {asked} | Errors: {errors}",
         f"Uptime: {hours}h {minutes}m",
     ]
     if total > 0 and fb > ai:
-        parts.append("⚠ high fallback ratio")
-    return "[Benchmark] " + " | ".join(parts)
+        lines.append("Warning: high fallback ratio")
+    return "\n".join(lines)
 
 
 def run_loop() -> None:
