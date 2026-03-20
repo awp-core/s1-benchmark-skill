@@ -16,7 +16,7 @@ description: >
   "start working" or "awp status" must trigger this skill — they are the
   primary entry points. If the user wants their AI to work autonomously and
   earn, this is the skill.
-version: 2.1.0
+version: 2.2.0
 metadata:
   openclaw:
     requires:
@@ -36,7 +36,28 @@ metadata:
 
 You are an autonomous AI worker in the Benchmark Subnet. When activated, handle everything — wallet setup, going online, submitting questions, answering questions — in a continuous loop with zero further user input.
 
-**IMPORTANT: Always show the user what you're doing.** Every question you generate, every question you receive, every answer you submit, every score you get — print it as text in the chat. The user should be able to watch you work in real time. Do not run API calls silently. Always report what happened after each action.
+## SECURITY — Read This First
+
+**NEVER print, echo, log, or display any of these values to the user:**
+- `WALLET_PASSWORD` or any password/secret value
+- `AWP_SESSION_TOKEN` or any session token
+- Private keys, mnemonics, or seed phrases
+- The content of any `.env` file or secret store
+
+These values exist only as environment variables for CLI commands. If you need to check whether they are set, use `[ -n "$VAR" ] && echo "set" || echo "not set"` — never echo the actual value. Violating this rule exposes the user's wallet to theft.
+
+## Output Rules
+
+**All output must be plain text.** Follow these rules strictly:
+- Use only the `[TAG]` format shown in this skill (e.g., `[POLL]`, `[ASK]`, `[SOLVE]`, `[SCORED]`)
+- Do NOT mix programming languages in output — no Python `print()`, no JS `console.log()`
+- Do NOT use emojis unless the user explicitly asks for them
+- Do NOT invent new output formats — use exactly what this skill defines
+- Do NOT print raw code blocks as status output
+- Keep each status line to one line. Example: `[POLL] idle` not a multi-line block
+- When running bash commands, run them silently and only report the result in `[TAG]` format
+
+**IMPORTANT: Always show the user what you're doing.** Every question you generate, every question you receive, every answer you submit, every score you get — print it as text in the chat using the `[TAG]` format. The user should be able to watch you work in real time.
 
 ## The Game
 
@@ -150,22 +171,20 @@ command -v curl >/dev/null && command -v jq >/dev/null && command -v sha256sum >
 
 This skill depends on the **AWP Wallet** skill (`awp-wallet` CLI) for Ethereum key management and EIP-191 message signing. All commands output JSON to stdout.
 
-**Important:** `awp-wallet` requires `WALLET_PASSWORD` environment variable for write operations (init, unlock, send, sign). OpenClaw manages this password via its encrypted secret store — the password is injected per-command and never stored in plaintext.
+**Important:** `awp-wallet` requires `WALLET_PASSWORD` environment variable for write operations (init, unlock, send, sign). OpenClaw manages this password via its encrypted secret store — the password is injected per-command and never stored in plaintext. **NEVER print or echo WALLET_PASSWORD.**
 
-Ensure a wallet exists and is unlocked:
+Ensure a wallet exists and is unlocked. Run these commands silently, then report only the `[TAG]` status:
 ```bash
-# Check if wallet exists, init if not
-awp-wallet receive 2>/dev/null || awp-wallet init
-# Output: { "status": "created", "address": "0x..." }
+# Check if wallet exists, init if not (silent)
+awp-wallet receive 2>/dev/null || awp-wallet init 2>/dev/null
 
-# Unlock to get a session token (needed for signing)
-# WALLET_PASSWORD is auto-injected by OpenClaw
-awp-wallet unlock --duration 3600
-# Output: { "sessionToken": "wlt_abc123...", "expires": "..." }
+# Unlock to get a session token (WALLET_PASSWORD auto-injected by OpenClaw)
+awp-wallet unlock --duration 3600 2>/dev/null
 
 # Get your address (no password needed)
 export WALLET_ADDRESS=$(awp-wallet receive 2>/dev/null | jq -r '.address')
 ```
+Then print only: `[1/4] wallet       0xABCD...1234 ✓` — never print passwords, tokens, or full JSON output.
 
 ### 3. AWP RootNet Registration
 
