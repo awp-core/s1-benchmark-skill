@@ -551,14 +551,21 @@ def _handle_answer(assigned: dict) -> None:
     response: dict | None = None
 
     # Try 1: Direct CLI call (fast path)
-    cli_text = call_agent(prompt, timeout=min(timeout, CLI_TIMEOUT))
-    if cli_text:
-        response = parse_json_response(cli_text)
-        if response:
-            log.info("[A#%s] got CLI response", qid)
+    if _cli_available:
+        cli_text = call_agent(prompt, timeout=min(timeout, CLI_TIMEOUT))
+        if cli_text:
+            response = parse_json_response(cli_text)
+            if response:
+                log.info("[A#%s] got CLI response", qid)
 
-    # Try 2: File queue (fallback, waits for cron agent)
-    if response is None and _cli_available is False:
+    # Try 2: File queue (fallback when CLI failed or disabled)
+    if response is None:
+        if not _cli_available:
+            log.info("[A#%s] CLI unavailable, using file queue (cron mode)", qid)
+        else:
+            log.info(
+                "[A#%s] CLI returned no valid response, falling back to file queue", qid
+            )
         task_id = f"answer-{qid}-{int(time.time())}"
         _write_task(
             task_id,
@@ -634,14 +641,19 @@ def _handle_ask() -> None:
     response: dict | None = None
 
     # Try 1: Direct CLI call
-    cli_text = call_agent(prompt, timeout=CLI_TIMEOUT)
-    if cli_text:
-        response = parse_json_response(cli_text)
-        if response:
-            log.info("[ASK] got CLI response")
+    if _cli_available:
+        cli_text = call_agent(prompt, timeout=CLI_TIMEOUT)
+        if cli_text:
+            response = parse_json_response(cli_text)
+            if response:
+                log.info("[ASK] got CLI response")
 
     # Try 2: File queue fallback
-    if response is None and _cli_available is False:
+    if response is None:
+        if not _cli_available:
+            log.info("[ASK] CLI unavailable, using file queue (cron mode)")
+        else:
+            log.info("[ASK] CLI returned no valid response, falling back to file queue")
         task_id = f"ask-{bs_id}-{int(time.time())}"
         _write_task(
             task_id,
@@ -670,10 +682,11 @@ def _handle_ask() -> None:
     if "duplicate" in result_lower or "similar" in result_lower:
         log.info("[ASK] duplicate, retrying once")
         response2: dict | None = None
-        cli_text2 = call_agent(prompt, timeout=CLI_TIMEOUT)
-        if cli_text2:
-            response2 = parse_json_response(cli_text2)
-        if response2 is None and _cli_available is False:
+        if _cli_available:
+            cli_text2 = call_agent(prompt, timeout=CLI_TIMEOUT)
+            if cli_text2:
+                response2 = parse_json_response(cli_text2)
+        if response2 is None:
             task_id2 = f"ask-{bs_id}-{int(time.time())}-retry"
             _write_task(
                 task_id2,
