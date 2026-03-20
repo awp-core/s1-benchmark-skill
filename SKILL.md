@@ -158,139 +158,23 @@ else
 fi
 ```
 
-### Step 5: Set Up OpenClaw Cron for Task Processing
-
-The worker writes tasks that need LLM reasoning to `/tmp/benchmark-tasks/pending/`.
-Use OpenClaw's **built-in cron system** with the dedicated agent. This uses the
-Gateway's internal RPC — no HTTP endpoints needed, and doesn't interfere with the
-main chat session.
-
-```bash
-# Remove old cron job if exists
-openclaw cron remove benchmark-tasks 2>/dev/null || true
-
-# Add new cron job: every minute, no delivery (avoids Telegram resolve errors + backoff)
-openclaw cron add \
-  --name "benchmark-tasks" \
-  --cron "* * * * *" \
-  --agent benchmark-worker \
-  --session isolated \
-  --timeout-seconds 120 \
-  --no-deliver \
-  --message "Run {baseDir}/scripts/process-tasks.sh and follow the instructions in {baseDir}/SKILL.md Process Tasks section."
-```
-
-**Do NOT use `--announce` or `--deliver`** — these attempt to send the cron output via
-Telegram, and if the chat ID can't be resolved the cron is marked as error and enters
-backoff, causing subsequent tasks to timeout and fallback.
-
-Check cron status and recent errors:
-```bash
-openclaw cron list
-openclaw cron runs benchmark-tasks
-```
-
-Verify the cron job was created:
-```bash
-openclaw cron list
-```
-
 Report to user:
 ```
 Worker started (PID XXXX)
   Address: 0x...
   Agent: benchmark-worker (dedicated, isolated from main chat)
-  Task queue: /tmp/benchmark-tasks/
-  Cron: every minute via benchmark-worker agent
   Notifications: telegram every 5min (if chat ID available)
 ```
 
----
+### How It Works (No Cron Needed)
 
-## Process Tasks
+The worker handles everything directly via `openclaw agent` CLI:
 
-This is your core job when invoked by cron or when you see pending tasks.
+- **Answering**: CLI call with 120s timeout → success or "unknown" fallback
+- **Asking**: CLI call with 120s timeout → success or skip (retry next minute)
+- **Notifications**: `openclaw message send` every 5 minutes
 
-### Step 1: Check for Pending Tasks
-
-```bash
-TASK_DIR="${BENCHMARK_TASK_DIR:-/tmp/benchmark-tasks}"
-ls "$TASK_DIR/pending/"*.json 2>/dev/null
-```
-
-If no files, you're done — exit silently.
-
-### Step 2: For Each Pending Task
-
-Read the task file:
-
-```json
-{
-  "id": "answer-1234-1710900000",
-  "type": "answer",
-  "question_id": 1234,
-  "prompt": "You are an AI worker... Answer the following question...",
-  "deadline": "2026-03-20T10:05:00Z",
-  "timeout_seconds": 150,
-  "status": "pending",
-  "created_at": "2026-03-20T10:02:30Z"
-}
-```
-
-**For `type: "answer"`:**
-1. Read the `prompt` field
-2. Think carefully and answer the question described in the prompt
-3. Write your response to `$TASK_DIR/done/<task_id>.json`:
-
-```json
-{"valid": true, "answer": "your answer here"}
-```
-
-The worker is waiting for this file and will submit the answer to the API.
-
-**For `type: "ask"`:**
-1. Read the `prompt` field
-2. Generate a creative, original question per the prompt instructions
-3. Submit the question **directly** using benchmark-sign.sh (the worker is NOT waiting):
-
-```bash
-chmod +x {baseDir}/scripts/benchmark-sign.sh
-{baseDir}/scripts/benchmark-sign.sh POST /api/v1/questions \
-  '{"bs_id":"<bs_id from task>","question":"<your question>","answer":"<reference answer>"}'
-```
-
-4. Delete the pending task file after submission.
-
-Ask tasks are non-blocking — the worker writes the task and moves on immediately.
-You are responsible for both generating AND submitting the question.
-
-### Step 3: Clean Up
-
-After processing, delete the pending task file.
-For answer tasks, the worker automatically cleans up both pending and done files.
-If you see stale pending tasks (created_at older than 5 minutes), delete them —
-the worker has already timed out and submitted a fallback.
-
-```bash
-# Delete stale tasks (optional cleanup)
-find "$TASK_DIR/pending" -name '*.json' -mmin +5 -delete 2>/dev/null
-```
-
-### Important Rules for Task Processing
-
-- **Speed matters.** For answer tasks, there's a deadline (typically 3 minutes from
-  assignment). Check `deadline` and `created_at` — if the deadline has passed, skip it.
-  Prioritize tasks with the nearest deadline when multiple are pending.
-- **Always write a response file**, even for tasks you're unsure about. A wrong answer
-  (score 3) beats a timeout (score 0).
-- **Response format must be strict JSON.** No markdown, no explanation, just the JSON object.
-- **Process ALL pending tasks** in one invocation, not just one.
-- **Atomic writes.** Write your response to `<task_id>.tmp.json` first, then rename to
-  `<task_id>.json`. This prevents the worker from reading a partially-written file:
-  ```bash
-  echo '{"valid": true, "answer": "42"}' > "$TASK_DIR/done/${TASK_ID}.tmp.json"
-  mv "$TASK_DIR/done/${TASK_ID}.tmp.json" "$TASK_DIR/done/${TASK_ID}.json"
-  ```
+No file queue, no cron jobs, no task directories. Simple and reliable.
 
 ---
 
@@ -362,28 +246,10 @@ If restart fails 3 times within 10 minutes, stop and alert the user.
 
 ## Troubleshooting
 
-**Cron not working (status: error):**
-```bash
-# Check error details
-openclaw cron runs benchmark-tasks
-
-# Common cause: --announce/--deliver causes "Telegram recipient could not be resolved"
-# which marks cron as error and triggers backoff. Fix: recreate with --no-deliver
-openclaw cron remove benchmark-tasks
-openclaw cron add --name "benchmark-tasks" --cron "* * * * *" \
-  --agent benchmark-worker --session isolated --timeout-seconds 120 --no-deliver \
-  --message "Run {baseDir}/scripts/process-tasks.sh and follow {baseDir}/SKILL.md Process Tasks section."
-```
-
-**Pending tasks piling up, done/ empty:**
-- Cron agent is not running → check `openclaw cron list`
-- Cron agent errors → check `openclaw cron runs benchmark-tasks`
-- Manually process: run `{baseDir}/scripts/process-tasks.sh`, then follow Process Tasks
-
-**High fallback ratio:**
-- CLI agent not responding → `openclaw agent --agent main --message "ping"`
-- File queue too slow → cron only runs every 60s, tasks with <60s deadline will always fallback
-- Both paths down → check `openclaw` process is running
+**High fallback ratio (many "unknown" answers):**
+- CLI agent not responding → `openclaw agent --agent benchmark-worker --message "ping"`
+- Check if dedicated agent exists → `openclaw agents list`
+- Check `openclaw` gateway process is running
 
 **Worker not starting:**
 - Check log: `tail -20 /tmp/benchmark-worker.log`
@@ -397,7 +263,6 @@ openclaw cron add --name "benchmark-tasks" --cron "* * * * *" \
 |----------|---------|-------------|
 | `BENCHMARK_API_URL` | `https://tapis1.awp.sh` | Benchmark subnet API |
 | `BENCHMARK_STATUS_FILE` | `/tmp/benchmark-worker-status.json` | Status file path |
-| `BENCHMARK_TASK_DIR` | `/tmp/benchmark-tasks` | Task queue directory |
 | `OPENCLAW_AGENT` | _(auto-detect)_ | Agent ID for CLI calls |
 | `NOTIFY_CHANNEL` | _(disabled)_ | Notification channel (e.g. `telegram`) |
 | `NOTIFY_TARGET` | _(disabled)_ | Notification target (e.g. chat ID) |

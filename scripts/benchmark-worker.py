@@ -16,7 +16,6 @@ import subprocess
 import sys
 import time
 from datetime import datetime, timezone
-from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Configuration (environment variables with defaults)
@@ -34,15 +33,9 @@ SUSPEND_SLEEP: int = 60  # seconds when suspended
 UNLOCK_INTERVAL: int = 25 * 60  # re-unlock every 25 minutes
 ASK_INTERVAL: int = 60  # seconds between question submissions (API rate limit: 1/min)
 ANSWER_CLI_TIMEOUT: int = 120  # seconds for CLI answering (single attempt)
-ASK_QUEUE_TIMEOUT: int = (
-    300  # max seconds for ask task in file queue (not time-critical)
-)
-TASK_POLL_INTERVAL: int = 2  # seconds between checks for agent response
-
 STATUS_FILE: str = os.environ.get(
     "BENCHMARK_STATUS_FILE", "/tmp/benchmark-worker-status.json"
 )
-TASK_DIR: str = os.environ.get("BENCHMARK_TASK_DIR", "/tmp/benchmark-tasks")
 OPENCLAW_AGENT: str = os.environ.get("OPENCLAW_AGENT", "")  # auto-detected at startup
 NOTIFY_CHANNEL: str = os.environ.get("NOTIFY_CHANNEL", "")  # e.g. "telegram"
 NOTIFY_TARGET: str = os.environ.get("NOTIFY_TARGET", "")  # e.g. chat_id
@@ -374,55 +367,6 @@ def re_enable_cli() -> None:
 # ---------------------------------------------------------------------------
 # Task queue: file-based communication with OpenClaw agent (fallback)
 # ---------------------------------------------------------------------------
-
-
-def _ensure_task_dirs() -> None:
-    """Create task queue directories if they don't exist."""
-    Path(TASK_DIR, "pending").mkdir(parents=True, exist_ok=True)
-    Path(TASK_DIR, "done").mkdir(parents=True, exist_ok=True)
-
-
-def _write_task(task_id: str, task_data: dict) -> Path:
-    """Write a task file to the pending directory."""
-    task_data["id"] = task_id
-    task_data["created_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    task_data["status"] = "pending"
-    path = Path(TASK_DIR, "pending", f"{task_id}.json")
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(task_data, indent=2))
-    tmp.rename(path)
-    log.info("[TASK] wrote %s", task_id)
-    return path
-
-
-def _wait_for_response(task_id: str, timeout: float) -> dict | None:
-    """Wait for the agent to write a response file in the done directory."""
-    done_path = Path(TASK_DIR, "done", f"{task_id}.json")
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline and running:
-        if done_path.exists():
-            try:
-                raw = done_path.read_text()
-                # Use parse_json_response to handle markdown fences etc.
-                data = parse_json_response(raw)
-                if data is None:
-                    data = json.loads(raw)  # strict fallback
-                done_path.unlink(missing_ok=True)
-                Path(TASK_DIR, "pending", f"{task_id}.json").unlink(missing_ok=True)
-                log.info("[TASK] got response for %s", task_id)
-                return data
-            except (json.JSONDecodeError, OSError) as e:
-                log.warning("[TASK] failed to read response %s: %s", task_id, e)
-                done_path.unlink(missing_ok=True)
-                return None
-        time.sleep(TASK_POLL_INTERVAL)
-    # Timeout — clean up pending file
-    log.warning("[TASK] timeout waiting for %s (%ds)", task_id, int(timeout))
-    Path(TASK_DIR, "pending", f"{task_id}.json").unlink(missing_ok=True)
-    return None
-
-
-# ---------------------------------------------------------------------------
 # Response parsing
 # ---------------------------------------------------------------------------
 
@@ -637,75 +581,36 @@ def _handle_ask() -> None:
             if response:
                 log.info("[ASK] got CLI response")
 
-    # If CLI worked, submit the question
-    if response and "question" in response and "answer" in response:
-        question = str(response["question"])
-        answer = str(response["answer"])
-        log.info('[ASK] %s "%s"', bs_id, question[:60])
-        body = json.dumps({"bs_id": bs_id, "question": question, "answer": answer})
-        result = signed_request("POST", "/api/v1/questions", body)
-        try:
-            rdata = json.loads(result)
-            if rdata.get("ok"):
-                new_id = rdata.get("data", {}).get("question_id", "?")
-                log.info("[ASK] ok #%s", new_id)
-                _stats["questions_asked"] += 1
-                _record_action(f"[ASK] ok #{new_id}")
-            else:
-                log.warning("[ASK] err: %s", rdata.get("error", "unknown"))
-                _stats["errors"] += 1
-        except json.JSONDecodeError:
-            log.warning("[ASK] err: invalid response")
-            _stats["errors"] += 1
-        _write_status()
+    # CLI failed — skip, will retry next minute
+    if not response or "question" not in response or "answer" not in response:
+        log.warning("[ASK] no valid response, skipping (will retry next cycle)")
         return
 
-    # CLI failed or unavailable — write task to file queue and move on (non-blocking).
-    # The cron agent will process it and submit the question via benchmark-sign.sh.
-    task_id = f"ask-{bs_id}-{int(time.time())}"
-    log.info("[ASK] writing task %s to file queue (non-blocking)", task_id)
-    _write_task(
-        task_id,
-        {
-            "type": "ask",
-            "bs_id": bs_id,
-            "prompt": prompt,
-            "timeout_seconds": ASK_QUEUE_TIMEOUT,
-        },
-    )
+    # Submit the question
+    question = str(response["question"])
+    answer = str(response["answer"])
+    log.info('[ASK] %s "%s"', bs_id, question[:60])
+    body = json.dumps({"bs_id": bs_id, "question": question, "answer": answer})
+    result = signed_request("POST", "/api/v1/questions", body)
+    try:
+        rdata = json.loads(result)
+        if rdata.get("ok"):
+            new_id = rdata.get("data", {}).get("question_id", "?")
+            log.info("[ASK] ok #%s", new_id)
+            _stats["questions_asked"] += 1
+            _record_action(f"[ASK] ok #{new_id}")
+        else:
+            log.warning("[ASK] err: %s", rdata.get("error", "unknown"))
+            _stats["errors"] += 1
+    except json.JSONDecodeError:
+        log.warning("[ASK] err: invalid response")
+        _stats["errors"] += 1
+    _write_status()
 
 
 # ---------------------------------------------------------------------------
 # Main loop
 # ---------------------------------------------------------------------------
-
-
-def _cleanup_stale_files() -> None:
-    """Remove stale done/ files that were written after the worker already timed out."""
-    done_dir = Path(TASK_DIR, "done")
-    if not done_dir.exists():
-        return
-    now = time.time()
-    for f in done_dir.glob("*.json"):
-        try:
-            age = now - f.stat().st_mtime
-            if age > 300:  # older than 5 minutes
-                f.unlink(missing_ok=True)
-                log.info("[CLEANUP] removed stale done file: %s", f.name)
-        except OSError:
-            pass
-    # Also clean stale pending files (agent never picked them up)
-    pending_dir = Path(TASK_DIR, "pending")
-    if not pending_dir.exists():
-        return
-    for f in pending_dir.glob("*.json"):
-        try:
-            age = now - f.stat().st_mtime
-            if age > 300:
-                f.unlink(missing_ok=True)
-                log.info("[CLEANUP] removed stale pending file: %s", f.name)
-        except OSError:
-            pass
 
 
 def _notify_user(message: str) -> None:
@@ -757,7 +662,6 @@ def _build_status_summary() -> str:
 def run_loop() -> None:
     """Main worker loop: poll -> answer or ask -> repeat."""
     last_unlock = time.monotonic()
-    last_cleanup = time.monotonic()
     last_cli_probe = time.monotonic()
     last_ask = 0.0  # trigger ask on first opportunity
     last_notify = time.monotonic()
@@ -767,11 +671,6 @@ def run_loop() -> None:
         if NOTIFY_CHANNEL and time.monotonic() - last_notify >= NOTIFY_INTERVAL:
             _notify_user(_build_status_summary())
             last_notify = time.monotonic()
-
-        # -- Periodic cleanup of stale task files ----------------------------
-        if time.monotonic() - last_cleanup > 120:  # every 2 minutes
-            _cleanup_stale_files()
-            last_cleanup = time.monotonic()
 
         # -- Periodically try to re-enable CLI if disabled -------------------
         if time.monotonic() - last_cli_probe > 300:  # every 5 minutes
@@ -879,9 +778,6 @@ def main() -> None:
     except OSError:
         pass
 
-    # Ensure task queue directories exist
-    _ensure_task_dirs()
-
     # 2. Unlock wallet
     if not unlock_wallet():
         print(
@@ -916,15 +812,14 @@ def main() -> None:
     agent_id = detect_agent()
     cli_ok = _probe_cli()
     log.info(
-        "[SETUP] agent: %s | CLI: %s | task dir: %s",
+        "[SETUP] agent: %s | CLI: %s",
         agent_id,
-        "available" if cli_ok else "unavailable (using file queue)",
-        TASK_DIR,
+        "available" if cli_ok else "unavailable",
     )
     if not cli_ok:
         global _cli_available
         _cli_available = False
-        log.info("[SETUP] will use file queue with cron for LLM tasks")
+        log.warning("[SETUP] CLI unavailable — answers will fallback to 'unknown'")
 
     print(json.dumps({"ok": True, "message": "worker started", "address": address}))
 
