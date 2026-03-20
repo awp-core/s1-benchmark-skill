@@ -804,10 +804,10 @@ def _notify_action(action: str, detail: dict | None = None) -> None:
 
 
 def _notify_summary() -> None:
-    """Send periodic summary notification (only in summary mode)."""
+    """Send periodic summary with score distribution. Sent in both realtime and summary modes."""
     global _last_notify_snapshot
     cfg = _read_config()
-    if cfg["notify_mode"] != "summary":
+    if cfg["notify_mode"] == "silent":
         return
     msg = _format_summary()
     _send_message(msg)
