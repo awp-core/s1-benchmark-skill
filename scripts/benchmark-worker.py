@@ -102,6 +102,26 @@ _recent_actions: list[dict[str, str]] = []  # last N actions for user queries
 _RECENT_ACTIONS_MAX: int = 50
 
 
+def _restore_stats() -> None:
+    """Restore stats from the status file on startup, so restarts don't reset counters."""
+    global _stats, _last_action, _last_action_at, _recent_actions
+    try:
+        with open(STATUS_FILE) as f:
+            data = json.load(f)
+        prev = data.get("stats", {})
+        for key in _stats:
+            if key in prev and isinstance(prev[key], int):
+                _stats[key] = prev[key]
+        _last_action = data.get("last_action", "")
+        _last_action_at = data.get("last_action_at", "")
+        actions = data.get("recent_actions", [])
+        if isinstance(actions, list):
+            _recent_actions = actions[-_RECENT_ACTIONS_MAX:]
+        log.info("[SETUP] restored stats from previous run: %s", _stats)
+    except (OSError, json.JSONDecodeError, KeyError):
+        log.info("[SETUP] no previous stats to restore, starting fresh")
+
+
 def _write_status() -> None:
     """Write current worker status to a JSON file for external monitoring.
 
@@ -1049,7 +1069,10 @@ def main() -> None:
         except OSError:
             pass
 
-    # 6. Write initial status and start main loop
+    # 6. Restore stats from previous run (if any)
+    _restore_stats()
+
+    # 7. Write initial status and start main loop
     _record_action("[SETUP] ready")
     _write_status()
     run_loop()
