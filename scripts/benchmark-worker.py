@@ -461,7 +461,13 @@ def build_question_prompt(bench_set: dict) -> str:
     )
     parts.append("")
     parts.append("## Benchmark Set")
-    parts.append(f"- ID: {bench_set.get('bs_id', 'N/A')}")
+    set_id = (
+        bench_set.get("bs_id")
+        or bench_set.get("set_id")
+        or bench_set.get("id")
+        or "N/A"
+    )
+    parts.append(f"- ID: {set_id}")
     parts.append(f"- Description: {bench_set.get('description', 'N/A')}")
     parts.append(
         f"- Question requirements: {bench_set.get('question_requirements', 'N/A')}"
@@ -586,7 +592,11 @@ def _handle_ask() -> None:
         return
 
     chosen = random.choice(sets)
-    bs_id = chosen.get("bs_id", "unknown")
+    # API may return "bs_id", "set_id", or "id" depending on version
+    bs_id = chosen.get("bs_id") or chosen.get("set_id") or chosen.get("id") or "unknown"
+    if bs_id == "unknown":
+        log.warning("[ASK] benchmark set has no bs_id: %s", json.dumps(chosen)[:200])
+        return
     prompt = build_question_prompt(chosen)
     response: dict | None = None
 
