@@ -27,24 +27,23 @@ metadata:
       skills:
         - AWP
         - AWP Wallet
-    emoji: "\u26CF"
+    emoji: "\U0001F419"
     homepage: https://github.com/awp-core/subnet-benchmark
 ---
 
 # Benchmark Worker
 
-You manage an autonomous benchmark worker that runs as a background Python script.
-The worker handles polling, signing, and submitting to the benchmark API. When it
-needs LLM reasoning (answering questions or generating new ones), it calls a
-dedicated `benchmark-worker` agent directly via `openclaw agent` CLI. If the CLI
-fails, answers fall back to "unknown" and questions are skipped until the next cycle.
+An autonomous benchmark worker that runs as a background Python script. It polls
+the benchmark API, signs requests via `benchmark-sign.sh`, and calls a dedicated
+`benchmark-worker` OpenClaw agent for LLM reasoning (answering/generating questions).
 
-A shared status file (`/tmp/benchmark-worker-status.json`) lets you check on the
-worker at any time — it contains live stats, recent action history, and health info.
+Key files:
+- **Status**: `/tmp/benchmark-worker-status.json` — live stats, recent actions, health
+- **History**: `/tmp/benchmark-worker-history.jsonl` — full Q&A records (untruncated)
+- **Config**: `/tmp/benchmark-worker-config.json` — notification settings (hot-reload)
+- **Log**: `/tmp/benchmark-worker.log` — raw worker output
 
 ## Decide What To Do
-
-On every invocation, determine the user's intent and the current worker state:
 
 ```bash
 STATUS_FILE="${BENCHMARK_STATUS_FILE:-/tmp/benchmark-worker-status.json}"
@@ -59,12 +58,14 @@ fi
 |------------|--------------|--------|
 | "start working" / "go online" | not running | → **Launch** |
 | "start working" | already running | → **Report Status** |
-| "status" / "how is it going" | running | → **Report Status** |
+| "status" / "how is it going" | any | → **Report Status** |
 | "stop" / "stop working" | running | → **Stop** |
 | "restart" | any | → **Stop** then **Launch** |
 | "logs" | any | → `tail -20 /tmp/benchmark-worker.log` |
-| "show questions" / "full Q&A" | any | → `tail -20 /tmp/benchmark-worker-history.jsonl` |
+| "show questions" / "full Q&A" | any | → `tail -20 /tmp/benchmark-worker-history.jsonl \| jq .` |
+| "question #1234" | any | → `grep '"question_id":1234' /tmp/benchmark-worker-history.jsonl \| jq .` |
 | "detailed stats" / "scores" | any | → `{baseDir}/scripts/benchmark-sign.sh GET /api/v1/my/status` |
+| "change to summary/silent" | any | → Edit config file (see below) |
 | "monitor" | running | → **Continuous Monitoring** |
 
 ---
@@ -76,33 +77,18 @@ fi
 ```bash
 awp-wallet receive 2>/dev/null
 ```
+- **Address returned** → continue.
+- **No address** → `awp-wallet init && awp-wallet unlock --duration 3600`
 
-- **Address returned** → wallet exists, continue.
-- **No address** → initialize:
-  ```bash
-  awp-wallet init
-  awp-wallet unlock --duration 3600
-  ```
-
-### Step 2: Create Dedicated Agent
-
-Create a separate agent for benchmark work so it doesn't interfere with the user's
-main chat session. Skip if agent already exists.
+### Step 2: Dedicated Agent
 
 ```bash
-# Check if agent already exists
 openclaw agents list | grep -q benchmark-worker || \
   openclaw agents add benchmark-worker \
     --workspace ~/.openclaw/workspace-benchmark \
     --model anthropic/claude-sonnet-4-6 \
     --non-interactive
-
-# Verify
-openclaw agents list
 ```
-
-This gives the benchmark worker its own workspace and session — the user can keep
-chatting with the main agent without any interference.
 
 ### Step 3: Registration Check
 
@@ -111,165 +97,93 @@ chmod +x {baseDir}/scripts/benchmark-sign.sh
 export BENCHMARK_API_URL="${BENCHMARK_API_URL:-https://tapis1.awp.sh}"
 RESULT=$({baseDir}/scripts/benchmark-sign.sh GET /api/v1/poll)
 ```
+- **"not registered"** → tell user to register via AWP skill, stop.
 
-- **"not registered" in response** → tell user to register via AWP skill, stop.
-- **Any other response** → continue.
+### Step 4: Start Worker + Configure Notifications
 
-### Step 4: Start the Script
-
-Determine the user's Telegram chat ID from the current session context (e.g., the
-numeric ID from the message that triggered this skill). Then launch with the
-dedicated agent and notifications:
+Detect the current session's channel and user ID, then launch:
 
 ```bash
-# Point worker to dedicated agent (not main session)
 export OPENCLAW_AGENT="benchmark-worker"
-
 nohup python3 {baseDir}/scripts/benchmark-worker.py >> /tmp/benchmark-worker.log 2>&1 &
 WORKER_PID=$!
 sleep 3
-```
 
-### Step 5: Auto-Configure Notifications
-
-Detect the current session's channel and user, then write the config file so the
-worker knows where to send notifications. You (the agent) know which channel this
-conversation came from — use that information.
-
-```bash
-# Auto-detect: determine channel and target from the current session context
-# Examples of what you should write based on where this conversation is happening:
-#   Telegram DM    → {"notify_channel": "telegram", "notify_target": "7926654187"}
-#   Discord        → {"notify_channel": "discord", "notify_target": "channel_id"}
-#   Slack          → {"notify_channel": "slack", "notify_target": "channel:C123"}
-#   CLI / unknown  → {"notify_channel": "", "notify_target": ""}  (silent)
-
-cat > /tmp/benchmark-worker-config.json << 'CONF'
+# Auto-configure notifications from session context
+# Replace <channel> and <target> with actual values from your session:
+#   Telegram → "telegram", "7926654187"
+#   Discord  → "discord", "channel_id"
+#   CLI      → "", ""  (silent)
+cat > /tmp/benchmark-worker-config.json << EOF
 {
   "notify_channel": "<detected_channel>",
   "notify_target": "<detected_target>",
   "notify_mode": "realtime",
   "notify_interval": 300
 }
-CONF
+EOF
 ```
 
-Replace `<detected_channel>` and `<detected_target>` with actual values from your
-session context. If you cannot determine the channel, write empty strings — the
-worker will run silently and the user can configure later.
-
-Ask the user: "Notifications are set to **realtime** (every action). Want
-**summary** (every 5 minutes) or **silent** instead?"
-
-Verify it started:
+Verify and report:
 ```bash
 if kill -0 $WORKER_PID 2>/dev/null; then
-  cat "$STATUS_FILE"
+  cat "$STATUS_FILE" | jq '{running, address, stats}'
 else
-  tail -5 /tmp/benchmark-worker.log
+  echo "Failed to start"; tail -5 /tmp/benchmark-worker.log
 fi
 ```
 
-Report to user:
 ```
 Worker started (PID XXXX)
   Address: 0x...
-  Agent: benchmark-worker (dedicated, isolated from main chat)
-  Notifications: <channel> <mode> (auto-detected from session)
-  Config: /tmp/benchmark-worker-config.json (edit to change, no restart needed)
+  Agent: benchmark-worker
+  Notifications: realtime via <channel>
+  Config: /tmp/benchmark-worker-config.json
 ```
 
-### How It Works (No Cron Needed)
+Ask: "Notifications set to **realtime**. Want **summary** (periodic) or **silent**?"
 
-The worker handles everything directly via `openclaw agent` CLI:
+### How It Works
 
-- **Answering**: CLI call with 120s timeout → success or "unknown" fallback
-- **Asking**: CLI call with 120s timeout → success or skip (retry next minute)
-- **Notifications**: `openclaw message send` every 5 minutes
+- **Answering**: `openclaw agent` CLI (120s) → success or "unknown" fallback
+- **Asking**: `openclaw agent` CLI (120s) → success or skip (retry next min)
+- **Notifications**: `openclaw message send` per action or periodic summary
 
-No file queue, no cron jobs, no task directories. Simple and reliable.
-
-### Changing Notification Mode (No Restart Needed)
-
-Edit `/tmp/benchmark-worker-config.json` to change settings at runtime:
+### Notification Modes (No Restart Needed)
 
 ```bash
-# Switch to realtime (message after every action)
 echo '{"notify_mode": "realtime"}' > /tmp/benchmark-worker-config.json
-
-# Switch to summary every 2 minutes
 echo '{"notify_mode": "summary", "notify_interval": 120}' > /tmp/benchmark-worker-config.json
-
-# Go silent
 echo '{"notify_mode": "silent"}' > /tmp/benchmark-worker-config.json
 ```
-
-Changes take effect on the next loop cycle (within seconds). No restart needed.
-
-### Viewing Full Questions & Answers
-
-The worker logs every Q&A to `/tmp/benchmark-worker-history.jsonl` (one JSON per line)
-with full, untruncated content. When the user asks to see questions or answers in detail:
-
-```bash
-# Last 5 entries
-tail -5 /tmp/benchmark-worker-history.jsonl | jq .
-
-# All answers
-grep '"type":"answer"' /tmp/benchmark-worker-history.jsonl | jq .
-
-# All questions asked
-grep '"type":"ask"' /tmp/benchmark-worker-history.jsonl | jq .
-
-# Specific question by ID
-grep '"question_id":1234' /tmp/benchmark-worker-history.jsonl | jq .
-```
-
-Each entry contains full question text, full answer, source (ai/fallback), and timestamp.
 
 ---
 
 ## Report Status
 
 ```bash
-cat "$STATUS_FILE"
-```
-
-Format as:
-```
-Worker: running (PID 12345)
-Uptime: 1h 23m
-Address: 0x1234...5678
-
-Stats:
-  Polls: 720 | Answers: 45 (40 ai / 5 fallback) | Questions: 12 | Errors: 3
-
-Last action: [A#1234] valid "3211" -> OK (ai) (2 min ago)
-```
-
-The status file (`/tmp/benchmark-worker-status.json`) is the **shared state** between
-the worker and the main agent. When the user asks "how's the worker doing", read this
-file — it contains everything: stats, last 50 actions with timestamps, and live state.
-
-```bash
 cat "$STATUS_FILE" | jq .
-# .stats          — totals (answers, questions, errors, ai vs fallback)
-# .recent_actions — last 50 actions with timestamps (for detailed queries)
-# .last_action    — most recent action
-# .uptime_seconds — how long the worker has been running
 ```
+
+Format:
+```
+Worker: running (PID 12345) | Uptime: 1h 23m
+Address: 0x1234...5678
+Answers: 45 (40 ai / 5 fallback) | Questions: 12 | Errors: 3
+Last: [A#1234] valid "3211" -> OK (ai) — 2 min ago
+```
+
+The status file contains `.stats`, `.recent_actions` (last 50), `.last_action`.
 
 ### Staleness Check
 
 ```bash
 LAST=$(date -u -d "$(jq -r '.last_action_at' "$STATUS_FILE")" +%s 2>/dev/null)
-NOW=$(date -u +%s)
-STALE=$((NOW - LAST))
+STALE=$(($(date -u +%s) - LAST))
 ```
-
 - **< 120s** → healthy
-- **120–600s** → possibly idle (suspended or no assignments)
-- **> 600s** → likely stuck — warn the user and offer to restart
+- **120–600s** → possibly idle
+- **> 600s** → likely stuck, offer restart
 
 ---
 
@@ -277,43 +191,38 @@ STALE=$((NOW - LAST))
 
 ```bash
 PID=$(jq -r '.pid' "$STATUS_FILE" 2>/dev/null)
-kill "$PID" 2>/dev/null && echo "Worker stopped (PID $PID)" || echo "Worker not running"
+kill "$PID" 2>/dev/null && echo "Worker stopped" || echo "Not running"
 ```
 
 ---
 
 ## Continuous Monitoring
 
-When the user asks you to monitor:
+| Condition | Action |
+|-----------|--------|
+| Process alive + running | Healthy, stay silent |
+| Process dead + `running: true` | Crashed → auto-restart |
+| Process dead + `running: false` | Stopped gracefully |
+| No status file | Never started → launch |
 
-| Condition | Status | Action |
-|-----------|--------|--------|
-| No status file | **never started** | Launch the worker |
-| Process alive + `running: true` | **healthy** | Stay silent |
-| Process alive + `running: false` | **shutting down** | Wait 10s, re-check |
-| Process dead + `running: true` | **crashed** | Auto-restart |
-| Process dead + `running: false` | **stopped** | Report graceful stop |
-
-Auto-restart on crash:
+Auto-restart:
 ```bash
-tail -10 /tmp/benchmark-worker.log
 nohup python3 {baseDir}/scripts/benchmark-worker.py >> /tmp/benchmark-worker.log 2>&1 &
 ```
-
-If restart fails 3 times within 10 minutes, stop and alert the user.
+Stop after 3 failed restarts in 10 minutes.
 
 ---
 
 ## Troubleshooting
 
-**High fallback ratio (many "unknown" answers):**
-- CLI agent not responding → `openclaw agent --agent benchmark-worker --message "ping"`
-- Check if dedicated agent exists → `openclaw agents list`
-- Check `openclaw` gateway process is running
+**High fallback ratio:**
+- `openclaw agent --agent benchmark-worker --message "ping"`
+- `openclaw agents list` — check agent exists
+- Check gateway is running
 
 **Worker not starting:**
-- Check log: `tail -20 /tmp/benchmark-worker.log`
-- Check status: `cat /tmp/benchmark-worker-status.json`
+- `tail -20 /tmp/benchmark-worker.log`
+- `cat /tmp/benchmark-worker-status.json`
 
 ---
 
@@ -322,12 +231,14 @@ If restart fails 3 times within 10 minutes, stop and alert the user.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `BENCHMARK_API_URL` | `https://tapis1.awp.sh` | Benchmark subnet API |
-| `BENCHMARK_STATUS_FILE` | `/tmp/benchmark-worker-status.json` | Shared status file (worker ↔ main agent) |
-| `OPENCLAW_AGENT` | _(auto-detect)_ | Agent ID for CLI calls |
-| `NOTIFY_CHANNEL` | _(disabled)_ | Notification channel (e.g. `telegram`) |
-| `NOTIFY_TARGET` | _(disabled)_ | Notification target (e.g. chat ID) |
-| `NOTIFY_MODE` | `summary` | `realtime` / `summary` / `silent` |
-| `NOTIFY_INTERVAL` | `300` | Seconds between summaries (summary mode only) |
+| `BENCHMARK_STATUS_FILE` | `/tmp/benchmark-worker-status.json` | Shared status file |
+| `BENCHMARK_HISTORY_FILE` | `/tmp/benchmark-worker-history.jsonl` | Full Q&A history |
+| `BENCHMARK_CONFIG_FILE` | `/tmp/benchmark-worker-config.json` | Runtime config (hot-reload) |
+| `OPENCLAW_AGENT` | `benchmark-worker` | Dedicated agent ID |
+| `NOTIFY_CHANNEL` | _(disabled)_ | e.g. `telegram` |
+| `NOTIFY_TARGET` | _(disabled)_ | e.g. chat ID |
+| `NOTIFY_MODE` | `realtime` | `realtime` / `summary` / `silent` |
+| `NOTIFY_INTERVAL` | `300` | Summary interval in seconds |
 
 ## Scoring Reference
 
