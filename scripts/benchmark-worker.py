@@ -726,6 +726,7 @@ def _cleanup_stale_files() -> None:
 def run_loop() -> None:
     """Main worker loop: poll -> answer or ask -> repeat."""
     counter = 0
+    answer_count = 0
     last_unlock = time.monotonic()
     last_cleanup = time.monotonic()
     last_cli_probe = time.monotonic()
@@ -792,6 +793,11 @@ def run_loop() -> None:
         # -- Answer -----------------------------------------------------------
         if assigned:
             _handle_answer(assigned)
+            answer_count += 1
+            # After every N answers, try to ask a question (non-blocking)
+            if answer_count % ASK_EVERY_N == 0:
+                log.info("[ASK] triggered after %d answers", answer_count)
+                _handle_ask()
             # No sleep — immediately poll again
             continue
 
