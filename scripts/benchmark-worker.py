@@ -753,8 +753,8 @@ def _format_realtime(action: str, detail: dict | None = None) -> str:
         lines.append(f"```\n{action}\n```")
     lines.append("")
 
-    # Section 3: Stats (one line + smiley)
-    lines.append(_format_stats_line())
+    # Section 3: Brief stats (one line for realtime)
+    lines.append(_format_stats_brief())
     return "\n".join(lines)
 
 
@@ -798,13 +798,38 @@ def _format_summary() -> str:
     lines.append("```")
     lines.append("")
 
-    # Section 3: Stats
-    lines.append(_format_stats_line())
+    # Section 3: Detailed stats (summary gets server-side data too)
+    lines.append(_format_stats_detail())
     return "\n".join(lines)
 
 
-def _format_stats_line() -> str:
-    """Format stats as a single line with smiley at the end."""
+def _fetch_server_stats() -> dict | None:
+    """Fetch scoring/reward stats from the benchmark API."""
+    try:
+        raw = signed_request("GET", "/api/v1/my/status")
+        return json.loads(raw).get("data", {})
+    except (json.JSONDecodeError, AttributeError):
+        return None
+
+
+def _format_stats_brief() -> str:
+    """One-line stats for realtime notifications."""
+    uptime = int(time.monotonic() - _start_time)
+    hours, remainder = divmod(uptime, 3600)
+    minutes = remainder // 60
+    ai = _stats.get("answers_ai", 0)
+    fb = _stats.get("answers_fallback", 0)
+    total = _stats["answers"]
+    asked = _stats["questions_asked"]
+
+    line = f"A: {total} ({ai} ai / {fb} fb) | Q: {asked} | {hours}h{minutes}m"
+    if total > 0 and fb > ai:
+        return line + " \U0001f635"
+    return line + " \U0001f60a"
+
+
+def _format_stats_detail() -> str:
+    """Multi-line stats for summary notifications, includes server-side data."""
     uptime = int(time.monotonic() - _start_time)
     hours, remainder = divmod(uptime, 3600)
     minutes = remainder // 60
@@ -814,14 +839,31 @@ def _format_stats_line() -> str:
     asked = _stats["questions_asked"]
     errors = _stats["errors"]
 
-    line = (
-        f"A: {total} ({ai} ai / {fb} fb) | "
-        f"Q: {asked} | E: {errors} | "
-        f"{hours}h{minutes}m"
+    lines: list[str] = []
+    lines.append(
+        f"A: {total} ({ai} ai / {fb} fb) | Q: {asked} | E: {errors} | {hours}h{minutes}m"
     )
-    if total > 0 and fb > ai:
-        return line + " \U0001f635"
-    return line + " \U0001f60a"
+
+    # Try to get server-side stats (scores, rewards)
+    server = _fetch_server_stats()
+    if server:
+        scored_a = server.get("scored_answers", server.get("scoredAnswers", "?"))
+        scored_q = server.get("scored_asks", server.get("scoredAsks", "?"))
+        ans_avg = server.get("answer_score_avg", server.get("answerScoreAvg", "?"))
+        ask_avg = server.get("ask_score_avg", server.get("askScoreAvg", "?"))
+        composite = server.get("composite_score", server.get("compositeScore", "?"))
+        reward = server.get("total_reward", server.get("totalReward", "?"))
+        lines.append(f"Scored: {scored_a} answers / {scored_q} questions")
+        if ans_avg != "?" or ask_avg != "?":
+            lines.append(
+                f"Avg score: A {ans_avg} / Q {ask_avg} | Composite: {composite}"
+            )
+        if reward != "?" and reward:
+            lines.append(f"Rewards: {reward}")
+
+    emoji = "\U0001f635" if (total > 0 and fb > ai) else "\U0001f60a"
+    lines[-1] = lines[-1] + f" {emoji}"
+    return "\n".join(lines)
 
 
 def run_loop() -> None:
