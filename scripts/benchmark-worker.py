@@ -956,7 +956,7 @@ def _format_summary() -> str:
     delta_q = _stats["questions_asked"] - prev_asked
 
     lines.append(f" +{delta_a} answers  +{delta_q} questions")
-    lines.append("")
+    lines.append(f" {'=' * w}")
 
     recent = _recent_actions[-10:]
     if recent:
@@ -984,7 +984,7 @@ def _format_summary() -> str:
     asked = _stats["questions_asked"]
     errors = _stats["errors"]
 
-    lines.append(f" {'─' * w}")
+    lines.append(f" {'=' * w}")
 
     # Server stats
     server = _fetch_server_stats()
@@ -999,11 +999,11 @@ def _format_summary() -> str:
     lines.append(f" Answers   :  {total:>4}  ({scored_a} scored)")
     lines.append(f" Questions :  {asked:>4}  ({scored_q} scored)")
     lines.append(f" Errors    :  {errors:>4}")
-    lines.append("")
 
     # Answer score distribution
     ans_dist = _fetch_score_distribution() if server else {}
     if ans_dist:
+        lines.append(f" {'-' * w}")
         lines.append(" Answer Scores")
         a_info = {
             5: ("\u2713", "correct"),
@@ -1015,11 +1015,11 @@ def _format_summary() -> str:
             count = ans_dist[s]
             mark, label = a_info.get(s, ("?", str(s)))
             lines.append(f"  {mark} Score {s}:  {count:>4}  {label}")
-        lines.append("")
 
     # Question score distribution
     q_dist = _fetch_question_score_distribution() if server else {}
     if q_dist:
+        lines.append(f" {'-' * w}")
         lines.append(" Question Scores")
         q_info = {
             5: "(1-2/5 \u2713) great",
@@ -1034,7 +1034,7 @@ def _format_summary() -> str:
             lines.append(f"    Score {s}:  {count:>4}  {label}")
 
     # Footer
-    lines.append(f" {'─' * w}")
+    lines.append(f" {'=' * w}")
     footer_parts = [f"{hours}h{minutes}m"]
     online = _fetch_online_agents()
     if online is not None:
