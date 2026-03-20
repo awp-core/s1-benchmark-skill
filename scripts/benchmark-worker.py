@@ -873,8 +873,9 @@ def _format_realtime(action: str, detail: dict | None = None) -> str:
         lines.append(f"```\n{action}\n```")
     lines.append("")
 
-    # Section 3: Brief stats (one line for realtime)
-    lines.append(_format_stats_brief())
+    # Section 3: Brief stats — emoji reflects THIS action
+    is_fallback = detail.get("fallback", False) if detail else False
+    lines.append(_format_stats_brief(is_fallback))
     return "\n".join(lines)
 
 
@@ -964,7 +965,7 @@ def _fetch_question_score_distribution() -> dict[int, int]:
     return dist
 
 
-def _format_stats_brief() -> str:
+def _format_stats_brief(is_fallback: bool = False) -> str:
     """One-line stats for realtime notifications."""
     uptime = int(time.monotonic() - _start_time)
     hours, remainder = divmod(uptime, 3600)
@@ -975,8 +976,8 @@ def _format_stats_brief() -> str:
     asked = _stats["questions_asked"]
 
     line = f"A: {total} ({ai} ai / {fb} fb) | Q: {asked} | {hours}h{minutes}m"
-    # Smiley based on whether THIS answer was fallback (not cumulative ratio)
-    return line + " \U0001f60a"
+    emoji = "\U0001f635" if is_fallback else "\U0001f60a"
+    return line + f" {emoji}"
 
 
 def _format_stats_detail() -> str:
