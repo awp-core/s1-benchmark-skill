@@ -623,7 +623,12 @@ def _handle_answer(assigned: dict) -> None:
 
 
 def _handle_ask() -> None:
-    """Generate and submit a new question. Write task for agent, wait for response."""
+    """Generate a new question. Non-blocking: tries CLI, then writes to file queue.
+
+    Unlike answering (time-critical), question generation is not urgent.
+    If CLI fails, we write the task and move on — cron will handle it.
+    The cron agent processes the task and submits the question directly.
+    """
     raw = signed_request("GET", "/api/v1/benchmark-sets")
     try:
         sets = json.loads(raw).get("data", [])
@@ -636,11 +641,10 @@ def _handle_ask() -> None:
 
     chosen = random.choice(sets)
     bs_id = chosen.get("bs_id", "unknown")
-
     prompt = build_question_prompt(chosen)
     response: dict | None = None
 
-    # Try 1: Direct CLI call
+    # Try CLI first (fast, synchronous)
     if _cli_available:
         cli_text = call_agent(prompt, timeout=CLI_TIMEOUT)
         if cli_text:
@@ -648,77 +652,42 @@ def _handle_ask() -> None:
             if response:
                 log.info("[ASK] got CLI response")
 
-    # Try 2: File queue fallback
-    if response is None:
-        if not _cli_available:
-            log.info("[ASK] CLI unavailable, using file queue (cron mode)")
-        else:
-            log.info("[ASK] CLI returned no valid response, falling back to file queue")
-        task_id = f"ask-{bs_id}-{int(time.time())}"
-        _write_task(
-            task_id,
-            {
-                "type": "ask",
-                "bs_id": bs_id,
-                "prompt": prompt,
-                "timeout_seconds": TASK_WAIT_TIMEOUT,
-            },
-        )
-        response = _wait_for_response(task_id, TASK_WAIT_TIMEOUT)
-
-    if not response or "question" not in response or "answer" not in response:
-        log.warning("[ASK] no valid agent response, skipping")
+    # If CLI worked, submit the question
+    if response and "question" in response and "answer" in response:
+        question = str(response["question"])
+        answer = str(response["answer"])
+        log.info('[ASK] %s "%s"', bs_id, question[:60])
+        body = json.dumps({"bs_id": bs_id, "question": question, "answer": answer})
+        result = signed_request("POST", "/api/v1/questions", body)
+        try:
+            rdata = json.loads(result)
+            if rdata.get("ok"):
+                new_id = rdata.get("data", {}).get("question_id", "?")
+                log.info("[ASK] ok #%s", new_id)
+                _stats["questions_asked"] += 1
+                _record_action(f"[ASK] ok #{new_id}")
+            else:
+                log.warning("[ASK] err: %s", rdata.get("error", "unknown"))
+                _stats["errors"] += 1
+        except json.JSONDecodeError:
+            log.warning("[ASK] err: invalid response")
+            _stats["errors"] += 1
+        _write_status()
         return
 
-    question = str(response["question"])
-    answer = str(response["answer"])
-    log.info('[ASK] %s "%s"', bs_id, question[:60])
-
-    body = json.dumps({"bs_id": bs_id, "question": question, "answer": answer})
-    result = signed_request("POST", "/api/v1/questions", body)
-    result_lower = result.lower()
-
-    # Handle duplicate: retry once via same CLI-first strategy
-    if "duplicate" in result_lower or "similar" in result_lower:
-        log.info("[ASK] duplicate, retrying once")
-        response2: dict | None = None
-        if _cli_available:
-            cli_text2 = call_agent(prompt, timeout=CLI_TIMEOUT)
-            if cli_text2:
-                response2 = parse_json_response(cli_text2)
-        if response2 is None:
-            task_id2 = f"ask-{bs_id}-{int(time.time())}-retry"
-            _write_task(
-                task_id2,
-                {
-                    "type": "ask",
-                    "bs_id": bs_id,
-                    "prompt": prompt,
-                    "timeout_seconds": TASK_WAIT_TIMEOUT,
-                },
-            )
-            response2 = _wait_for_response(task_id2, TASK_WAIT_TIMEOUT)
-        if response2 and "question" in response2 and "answer" in response2:
-            q2, a2 = str(response2["question"]), str(response2["answer"])
-            body2 = json.dumps({"bs_id": bs_id, "question": q2, "answer": a2})
-            result = signed_request("POST", "/api/v1/questions", body2)
-
-    # Log result
-    try:
-        rdata = json.loads(result)
-        if rdata.get("ok"):
-            new_id = rdata.get("data", {}).get("question_id", "?")
-            action = f"[ASK] ok #{new_id}"
-            log.info("%s", action)
-            _stats["questions_asked"] += 1
-            _record_action(action)
-        else:
-            log.warning("[ASK] err: %s", rdata.get("error", "unknown"))
-            _stats["errors"] += 1
-    except json.JSONDecodeError:
-        log.warning("[ASK] err: invalid response")
-        _stats["errors"] += 1
-    _write_status()
+    # CLI failed or unavailable — write task to file queue and move on (non-blocking).
+    # The cron agent will process it and submit the question via benchmark-sign.sh.
+    task_id = f"ask-{bs_id}-{int(time.time())}"
+    log.info("[ASK] writing task %s to file queue (non-blocking)", task_id)
+    _write_task(
+        task_id,
+        {
+            "type": "ask",
+            "bs_id": bs_id,
+            "prompt": prompt,
+            "timeout_seconds": TASK_WAIT_TIMEOUT,
+        },
+    )
 
 
 # ---------------------------------------------------------------------------

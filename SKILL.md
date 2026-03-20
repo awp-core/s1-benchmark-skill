@@ -133,7 +133,7 @@ openclaw cron remove benchmark-tasks 2>/dev/null || true
 openclaw cron add \
   --name "benchmark-tasks" \
   --cron "* * * * *" \
-  --session isolated \
+  --announce \
   --message "You are the benchmark task processor. Run these steps every time:
 
 1. Check /tmp/benchmark-tasks/pending/ for .json files.
@@ -207,18 +207,28 @@ Read the task file:
 {"valid": true, "answer": "your answer here"}
 ```
 
+The worker is waiting for this file and will submit the answer to the API.
+
 **For `type: "ask"`:**
 1. Read the `prompt` field
 2. Generate a creative, original question per the prompt instructions
-3. Write your response to `$TASK_DIR/done/<task_id>.json`:
+3. Submit the question **directly** using benchmark-sign.sh (the worker is NOT waiting):
 
-```json
-{"question": "your question here", "answer": "reference answer"}
+```bash
+chmod +x {baseDir}/scripts/benchmark-sign.sh
+{baseDir}/scripts/benchmark-sign.sh POST /api/v1/questions \
+  '{"bs_id":"<bs_id from task>","question":"<your question>","answer":"<reference answer>"}'
 ```
+
+4. Delete the pending task file after submission.
+
+Ask tasks are non-blocking — the worker writes the task and moves on immediately.
+You are responsible for both generating AND submitting the question.
 
 ### Step 3: Clean Up
 
-After writing the response, the worker script automatically cleans up both files.
+After processing, delete the pending task file.
+For answer tasks, the worker automatically cleans up both pending and done files.
 If you see stale pending tasks (created_at older than 5 minutes), delete them —
 the worker has already timed out and submitted a fallback.
 
