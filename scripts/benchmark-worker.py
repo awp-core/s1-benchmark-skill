@@ -224,16 +224,51 @@ _agent_id: str = ""  # detected at startup
 
 
 def detect_agent() -> str:
-    """Detect available OpenClaw agent ID at startup."""
+    """Detect or create the dedicated benchmark-worker agent."""
     global _agent_id
 
     # If explicitly set via env, use that
     if OPENCLAW_AGENT:
         _agent_id = OPENCLAW_AGENT
-        log.info("[AGENT] using configured agent: %s", _agent_id)
+    else:
+        _agent_id = "benchmark-worker"
+
+    # Check if agent already exists
+    if _agent_exists(_agent_id):
+        log.info("[AGENT] found existing agent: %s", _agent_id)
         return _agent_id
 
-    # Try openclaw agents list
+    # Try to create it
+    log.info("[AGENT] agent '%s' not found, creating...", _agent_id)
+    try:
+        result = subprocess.run(
+            [
+                "openclaw",
+                "agents",
+                "add",
+                _agent_id,
+                "--workspace",
+                os.path.expanduser(f"~/.openclaw/workspace-{_agent_id}"),
+                "--non-interactive",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if result.returncode == 0:
+            log.info("[AGENT] created agent: %s", _agent_id)
+        else:
+            log.warning(
+                "[AGENT] failed to create agent: %s", result.stderr.strip()[:200]
+            )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        log.warning("[AGENT] 'openclaw' command not available, using agent ID as-is")
+
+    return _agent_id
+
+
+def _agent_exists(agent_id: str) -> bool:
+    """Check if an OpenClaw agent exists."""
     try:
         result = subprocess.run(
             ["openclaw", "agents", "list"],
@@ -241,34 +276,11 @@ def detect_agent() -> str:
             text=True,
             timeout=10,
         )
-        if result.returncode == 0 and result.stdout.strip():
-            # Parse agent list — look for first agent ID
-            for line in result.stdout.strip().split("\n"):
-                line = line.strip()
-                if not line or line.startswith(("-", "#", "NAME", "name")):
-                    continue
-                # Try JSON format
-                try:
-                    data = json.loads(line)
-                    if isinstance(data, list) and data:
-                        _agent_id = str(data[0].get("id", data[0].get("name", "main")))
-                        log.info("[AGENT] detected agent: %s", _agent_id)
-                        return _agent_id
-                except json.JSONDecodeError:
-                    pass
-                # Try plain text: first word is agent ID
-                agent_id = line.split()[0].strip()
-                if agent_id:
-                    _agent_id = agent_id
-                    log.info("[AGENT] detected agent: %s", _agent_id)
-                    return _agent_id
+        if result.returncode == 0:
+            return agent_id in result.stdout
     except (subprocess.TimeoutExpired, FileNotFoundError):
         pass
-
-    # Default to "main"
-    _agent_id = "main"
-    log.info("[AGENT] defaulting to agent: %s", _agent_id)
-    return _agent_id
+    return False
 
 
 def call_agent(prompt: str, timeout: float = CLI_TIMEOUT) -> str | None:
