@@ -723,7 +723,7 @@ def _format_realtime(action: str, detail: dict | None = None) -> str:
     lines: list[str] = []
 
     # Section 1: Title
-    lines.append("*Subnet Benchmark Bot*")
+    lines.append("\u26cf\ufe0f *Subnet Benchmark Bot*")
     lines.append("")
 
     # Section 2: Action detail
@@ -750,7 +750,7 @@ def _format_summary() -> str:
     lines: list[str] = []
 
     # Section 1: Title
-    lines.append("*Subnet Benchmark Bot*")
+    lines.append("\u26cf\ufe0f *Subnet Benchmark Bot*")
     lines.append("")
 
     # Section 2: Recent actions (incremental, last 10)
