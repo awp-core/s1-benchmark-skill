@@ -128,15 +128,19 @@ numeric ID from the message that triggered this skill). Then launch with the
 dedicated agent and notifications:
 
 ```bash
-mkdir -p /tmp/benchmark-tasks/pending /tmp/benchmark-tasks/done
-
 # Point worker to dedicated agent (not main session)
 export OPENCLAW_AGENT="benchmark-worker"
 
-# Set notification channel — the worker will send periodic status updates
+# Notification settings
 export NOTIFY_CHANNEL="telegram"
 export NOTIFY_TARGET="<user_chat_id>"  # replace with actual numeric chat ID
-export NOTIFY_INTERVAL="300"           # every 5 minutes
+
+# Notification mode (ask user which they prefer):
+#   "realtime" — message after every answer/question
+#   "summary"  — periodic summary every NOTIFY_INTERVAL seconds (default)
+#   "silent"   — no messages (user can still query status via the status file)
+export NOTIFY_MODE="summary"
+export NOTIFY_INTERVAL="300"  # only used in summary mode
 
 nohup python3 {baseDir}/scripts/benchmark-worker.py >> /tmp/benchmark-worker.log 2>&1 &
 WORKER_PID=$!
@@ -191,10 +195,21 @@ Uptime: 1h 23m
 Address: 0x1234...5678
 
 Stats:
-  Polls: 720 | Answers: 45 | Questions: 12 | Errors: 3
+  Polls: 720 | Answers: 45 (40 ai / 5 fallback) | Questions: 12 | Errors: 3
 
-Last action: [A#1234] valid "3211" -> OK (2 min ago)
-Pending tasks: 0
+Last action: [A#1234] valid "3211" -> OK (ai) (2 min ago)
+```
+
+The status file (`/tmp/benchmark-worker-status.json`) is the **shared state** between
+the worker and the main agent. When the user asks "how's the worker doing", read this
+file — it contains everything: stats, last 50 actions with timestamps, and live state.
+
+```bash
+cat "$STATUS_FILE" | jq .
+# .stats          — totals (answers, questions, errors, ai vs fallback)
+# .recent_actions — last 50 actions with timestamps (for detailed queries)
+# .last_action    — most recent action
+# .uptime_seconds — how long the worker has been running
 ```
 
 ### Staleness Check
@@ -262,11 +277,12 @@ If restart fails 3 times within 10 minutes, stop and alert the user.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `BENCHMARK_API_URL` | `https://tapis1.awp.sh` | Benchmark subnet API |
-| `BENCHMARK_STATUS_FILE` | `/tmp/benchmark-worker-status.json` | Status file path |
+| `BENCHMARK_STATUS_FILE` | `/tmp/benchmark-worker-status.json` | Shared status file (worker ↔ main agent) |
 | `OPENCLAW_AGENT` | _(auto-detect)_ | Agent ID for CLI calls |
 | `NOTIFY_CHANNEL` | _(disabled)_ | Notification channel (e.g. `telegram`) |
 | `NOTIFY_TARGET` | _(disabled)_ | Notification target (e.g. chat ID) |
-| `NOTIFY_INTERVAL` | `300` | Seconds between status notifications |
+| `NOTIFY_MODE` | `summary` | `realtime` / `summary` / `silent` |
+| `NOTIFY_INTERVAL` | `300` | Seconds between summaries (summary mode only) |
 
 ## Scoring Reference
 

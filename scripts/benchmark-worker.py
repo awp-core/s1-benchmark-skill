@@ -39,9 +39,11 @@ STATUS_FILE: str = os.environ.get(
 OPENCLAW_AGENT: str = os.environ.get("OPENCLAW_AGENT", "")  # auto-detected at startup
 NOTIFY_CHANNEL: str = os.environ.get("NOTIFY_CHANNEL", "")  # e.g. "telegram"
 NOTIFY_TARGET: str = os.environ.get("NOTIFY_TARGET", "")  # e.g. chat_id
+# Notification mode: "realtime" (every action), "summary" (periodic), "silent" (none)
+NOTIFY_MODE: str = os.environ.get("NOTIFY_MODE", "summary")
 NOTIFY_INTERVAL: int = int(
     os.environ.get("NOTIFY_INTERVAL", "300")
-)  # seconds between notifications
+)  # seconds between summary notifications
 CLI_TIMEOUT: int = 120  # max seconds for a single CLI call
 
 # ---------------------------------------------------------------------------
@@ -94,10 +96,18 @@ _stats: dict[str, int] = {
 _last_action: str = ""
 _last_action_at: str = ""
 _worker_address: str = ""
+_recent_actions: list[dict[str, str]] = []  # last N actions for user queries
+_RECENT_ACTIONS_MAX: int = 50
 
 
 def _write_status() -> None:
-    """Write current worker status to a JSON file for external monitoring."""
+    """Write current worker status to a JSON file for external monitoring.
+
+    This file serves two purposes:
+    1. Worker health monitoring (is it running, uptime, error count)
+    2. Shared state for the main agent — when user asks "how's the worker",
+       the main agent reads this file to answer with full context.
+    """
     status = {
         "running": running,
         "pid": os.getpid(),
@@ -106,6 +116,7 @@ def _write_status() -> None:
         "stats": {**_stats},
         "last_action": _last_action,
         "last_action_at": _last_action_at,
+        "recent_actions": _recent_actions[-_RECENT_ACTIONS_MAX:],
     }
     try:
         tmp = STATUS_FILE + ".tmp"
@@ -117,10 +128,15 @@ def _write_status() -> None:
 
 
 def _record_action(action: str) -> None:
-    """Record the latest action for status reporting."""
+    """Record the latest action for status reporting and history."""
     global _last_action, _last_action_at
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     _last_action = action
-    _last_action_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    _last_action_at = now
+    _recent_actions.append({"time": now, "action": action})
+    # Trim to keep memory bounded
+    if len(_recent_actions) > _RECENT_ACTIONS_MAX * 2:
+        del _recent_actions[: len(_recent_actions) - _RECENT_ACTIONS_MAX]
 
 
 # ---------------------------------------------------------------------------
@@ -548,6 +564,7 @@ def _handle_answer(assigned: dict) -> None:
     if status == "ERR":
         _stats["errors"] += 1
     _record_action(action)
+    _notify_action(action)
     _write_status()
 
 
@@ -596,9 +613,11 @@ def _handle_ask() -> None:
         rdata = json.loads(result)
         if rdata.get("ok"):
             new_id = rdata.get("data", {}).get("question_id", "?")
-            log.info("[ASK] ok #%s", new_id)
+            action = f'[ASK] ok #{new_id} "{question[:40]}"'
+            log.info("%s", action)
             _stats["questions_asked"] += 1
-            _record_action(f"[ASK] ok #{new_id}")
+            _record_action(action)
+            _notify_action(action)
         else:
             log.warning("[ASK] err: %s", rdata.get("error", "unknown"))
             _stats["errors"] += 1
@@ -613,8 +632,8 @@ def _handle_ask() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _notify_user(message: str) -> None:
-    """Send a notification to the user via openclaw message send."""
+def _send_message(message: str) -> None:
+    """Send a message to the user via openclaw message send."""
     if not NOTIFY_CHANNEL or not NOTIFY_TARGET:
         return
     try:
@@ -635,7 +654,19 @@ def _notify_user(message: str) -> None:
             timeout=10,
         )
     except (subprocess.TimeoutExpired, FileNotFoundError):
-        log.warning("[NOTIFY] failed to send notification")
+        log.warning("[NOTIFY] failed to send message")
+
+
+def _notify_action(action: str) -> None:
+    """Send per-action notification (only in realtime mode)."""
+    if NOTIFY_MODE == "realtime":
+        _send_message(action)
+
+
+def _notify_summary() -> None:
+    """Send periodic summary notification (only in summary mode)."""
+    if NOTIFY_MODE == "summary":
+        _send_message(_build_status_summary())
 
 
 def _build_status_summary() -> str:
@@ -667,9 +698,9 @@ def run_loop() -> None:
     last_notify = time.monotonic()
 
     while running:
-        # -- Periodic notification to user -----------------------------------
+        # -- Periodic summary notification ------------------------------------
         if NOTIFY_CHANNEL and time.monotonic() - last_notify >= NOTIFY_INTERVAL:
-            _notify_user(_build_status_summary())
+            _notify_summary()
             last_notify = time.monotonic()
 
         # -- Periodically try to re-enable CLI if disabled -------------------
