@@ -912,20 +912,20 @@ def _format_realtime(action: str, detail: dict | None = None) -> str:
     lines.append(f"\U0001f419 **{title}**")
     lines.append("")
 
-    # Section 2: Action detail — full content, no truncation
+    # Section 2: Action detail — full content, max 200 chars each
     if detail:
         qid = detail.get("question_id", "?")
         if action_type == "answer":
             src = "ai" if not detail.get("fallback") else "fallback"
             lines.append("```")
             lines.append(f"[Answer #{qid}] ({src})")
-            lines.append(f"Q: {detail.get('question', '')}")
-            lines.append(f"A: {detail.get('answer', '')}")
+            lines.append(f"Q: {detail.get('question', '')[:200]}")
+            lines.append(f"A: {detail.get('answer', '')[:200]}")
             lines.append("```")
         elif action_type == "ask":
             lines.append("```")
             lines.append(f"[Ask #{qid}]")
-            lines.append(f"Q: {detail.get('question', '')}")
+            lines.append(f"Q: {detail.get('question', '')[:200]}")
             lines.append("```")
     else:
         lines.append(f"```\n{action}\n```")
