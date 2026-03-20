@@ -956,7 +956,7 @@ def _format_summary() -> str:
     delta_q = _stats["questions_asked"] - prev_asked
 
     lines.append(f" +{delta_a} answers  +{delta_q} questions")
-    lines.append(f" {'=' * w}")
+    lines.append(f" {'-' * w}")
 
     recent = _recent_actions[-10:]
     if recent:
@@ -1014,7 +1014,7 @@ def _format_summary() -> str:
         for s in sorted(ans_dist, reverse=True):
             count = ans_dist[s]
             mark, label = a_info.get(s, ("?", str(s)))
-            lines.append(f"  {mark} Score {s}:  {count:>4}  {label}")
+            lines.append(f"  {mark:<2}Score {s}:  {count:>4}  {label}")
 
     # Question score distribution
     q_dist = _fetch_question_score_distribution() if server else {}
@@ -1031,7 +1031,7 @@ def _format_summary() -> str:
         for s in sorted(q_dist, reverse=True):
             count = q_dist[s]
             label = q_info.get(s, str(s))
-            lines.append(f"    Score {s}:  {count:>4}  {label}")
+            lines.append(f"  Score {s}:  {count:>4}  {label}")
 
     # Footer
     lines.append(f" {'=' * w}")
