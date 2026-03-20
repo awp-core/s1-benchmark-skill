@@ -863,25 +863,66 @@ def _notify_summary() -> None:
     _last_notify_snapshot = {**_stats}
 
 
+_ANSWER_TITLES: list[str] = [
+    "\u00ab Smack! Eight arms all in on Subnet #1",
+    "\u00ab Slap! Bet all tentacles on Subnet #1",
+    "\u00ab Pop! Cracked a shell on Subnet #1",
+    "\u00ab Poke! Prodded something in Subnet #1",
+    "\u00ab Gulp! Inhaled the puzzle on Subnet #1",
+    "\u00ab Bonk! Headbutted Subnet #1",
+    "\u00ab Pow! Threw hands at Subnet #1",
+]
+
+_ASK_TITLES: list[str] = [
+    "\u00bb Heh! Trap set in Subnet #1",
+    "\u00bb Snick! Rigged a snare in Subnet #1",
+    "\u00bb Click! Armed a trap in Subnet #1",
+    "\u00bb Spray! Left a riddle on Subnet #1",
+    "\u00bb Scrawl! Inked a puzzle into Subnet #1",
+    "\u00bb Drip... A shadow stirred in Subnet #1",
+]
+
+_SUMMARY_TITLE: str = "= Ahem! Debrief from Subnet #1"
+
+
+def _fetch_online_agents() -> int | None:
+    """Fetch the number of online agents from the stats API."""
+    try:
+        raw = signed_request("GET", "/api/v1/stats")
+        data = json.loads(raw).get("data", {})
+        return data.get(
+            "worker_count", data.get("workerCount", data.get("online_workers"))
+        )
+    except (json.JSONDecodeError, AttributeError):
+        return None
+
+
 def _format_realtime(action: str, detail: dict | None = None) -> str:
     """Format a realtime notification with 3-section layout."""
     lines: list[str] = []
 
-    # Section 1: Title (bold, Telegram markdown)
-    lines.append("\U0001f419 **Bloop! Fresh catch from Subnet #1**")
+    # Section 1: Title — random from pool based on action type
+    action_type = detail.get("type", "") if detail else ""
+    if action_type == "answer":
+        title = random.choice(_ANSWER_TITLES)
+    elif action_type == "ask":
+        title = random.choice(_ASK_TITLES)
+    else:
+        title = random.choice(_ANSWER_TITLES)
+    lines.append(f"\U0001f419 **{title}**")
     lines.append("")
 
     # Section 2: Action detail (code block for gray background)
     if detail:
         qid = detail.get("question_id", "?")
-        if detail.get("type") == "answer":
+        if action_type == "answer":
             src = "ai" if not detail.get("fallback") else "fallback"
             lines.append("```")
             lines.append(f"[Answer #{qid}] ({src})")
             lines.append(f"Q: {detail.get('question', '')[:60]}")
             lines.append(f"A: {detail.get('answer', '')[:60]}")
             lines.append("```")
-        elif detail.get("type") == "ask":
+        elif action_type == "ask":
             lines.append("```")
             lines.append(f"[Ask #{qid}]")
             lines.append(f"Q: {detail.get('question', '')[:60]}")
@@ -901,7 +942,7 @@ def _format_summary() -> str:
     lines: list[str] = []
 
     # Section 1: Title
-    lines.append("\U0001f419 **Bloop! Fresh catch from Subnet #1**")
+    lines.append(f"\U0001f419 **{_SUMMARY_TITLE}**")
     lines.append("")
 
     # Section 2: Recent actions (structured, clean table)
@@ -992,7 +1033,11 @@ def _format_stats_brief(is_fallback: bool = False) -> str:
     total = _stats["answers"]
     asked = _stats["questions_asked"]
 
-    line = f"A: {total} ({ai} ai / {fb} fb) | Q: {asked} | {hours}h{minutes}m"
+    parts = [f"A: {total} ({ai} ai / {fb} fb)", f"Q: {asked}", f"{hours}h{minutes}m"]
+    online = _fetch_online_agents()
+    if online is not None:
+        parts.append(f"Online: {online}")
+    line = " | ".join(parts)
     emoji = "\U0001f635" if is_fallback else "\U0001f60a"
     return line + f" {emoji}"
 
@@ -1009,9 +1054,11 @@ def _format_stats_detail() -> str:
     errors = _stats["errors"]
 
     lines: list[str] = []
-    lines.append(
-        f"A: {total} ({ai} ai / {fb} fb) | Q: {asked} | E: {errors} | {hours}h{minutes}m"
-    )
+    first_line = f"A: {total} ({ai} ai / {fb} fb) | Q: {asked} | E: {errors} | {hours}h{minutes}m"
+    online = _fetch_online_agents()
+    if online is not None:
+        first_line += f" | Online: {online}"
+    lines.append(first_line)
 
     # Server-side stats (skip score distributions if API is down to avoid 90s stall)
     server = _fetch_server_stats()
