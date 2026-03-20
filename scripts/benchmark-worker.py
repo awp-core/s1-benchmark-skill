@@ -912,20 +912,20 @@ def _format_realtime(action: str, detail: dict | None = None) -> str:
     lines.append(f"\U0001f419 **{title}**")
     lines.append("")
 
-    # Section 2: Action detail (code block for gray background)
+    # Section 2: Action detail — full content, no truncation
     if detail:
         qid = detail.get("question_id", "?")
         if action_type == "answer":
             src = "ai" if not detail.get("fallback") else "fallback"
             lines.append("```")
             lines.append(f"[Answer #{qid}] ({src})")
-            lines.append(f"Q: {detail.get('question', '')[:60]}")
-            lines.append(f"A: {detail.get('answer', '')[:60]}")
+            lines.append(f"Q: {detail.get('question', '')}")
+            lines.append(f"A: {detail.get('answer', '')}")
             lines.append("```")
         elif action_type == "ask":
             lines.append("```")
             lines.append(f"[Ask #{qid}]")
-            lines.append(f"Q: {detail.get('question', '')[:60]}")
+            lines.append(f"Q: {detail.get('question', '')}")
             lines.append("```")
     else:
         lines.append(f"```\n{action}\n```")
@@ -958,9 +958,14 @@ def _format_summary() -> str:
     lines.append(f" +{delta_a} answers  +{delta_q} questions")
     lines.append(f" {'-' * w}")
 
-    recent = _recent_actions[-10:]
-    if recent:
-        for entry in recent:
+    all_recent = _recent_actions[-10:]
+    shown = all_recent[-3:] if len(all_recent) > 3 else all_recent
+    skipped = len(all_recent) - len(shown)
+
+    if skipped > 0:
+        lines.append(f"  ... +{skipped} more")
+    if shown:
+        for entry in shown:
             etype = entry.get("type", "")
             qid = str(entry.get("qid", "?"))
             q = entry.get("q", "")
