@@ -175,16 +175,23 @@ def get_wallet_address() -> str | None:
 
 
 def unlock_wallet() -> bool:
-    """Unlock the wallet for 3600s and cache the session token."""
+    """Unlock the wallet for 3600s and cache the session token.
+
+    On failure, clears AWP_SESSION_TOKEN so benchmark-sign.sh will
+    auto-unlock on its next invocation.
+    """
     try:
         result = subprocess.run(
             ["awp-wallet", "unlock", "--duration", "3600"],
             capture_output=True,
             text=True,
             timeout=15,
+            env=sub_env,  # pass current env (includes WALLET_PASSWORD if set)
         )
         if result.returncode != 0:
             log.warning("[WALLET] unlock failed: %s", result.stderr.strip())
+            # Clear stale token so sign.sh will auto-unlock
+            sub_env.pop("AWP_SESSION_TOKEN", None)
             return False
         # awp-wallet may output "token" or "sessionToken" depending on version
         match = re.search(r'"(?:session[Tt]oken|token)"\s*:\s*"([^"]+)"', result.stdout)
@@ -211,7 +218,11 @@ def unlock_wallet() -> bool:
 
 
 def signed_request(method: str, path: str, body: str = "") -> str:
-    """Execute a signed API request via benchmark-sign.sh. Returns raw stdout."""
+    """Execute a signed API request via benchmark-sign.sh. Returns raw stdout.
+
+    On sign failure (exit != 0), clears AWP_SESSION_TOKEN so the next call
+    lets benchmark-sign.sh auto-unlock with a fresh token.
+    """
     args = [SIGN_SCRIPT, method, path]
     if body:
         args.append(body)
@@ -225,6 +236,8 @@ def signed_request(method: str, path: str, body: str = "") -> str:
         )
         if result.returncode != 0:
             log.warning("[SIGN] exit %d: %s", result.returncode, result.stderr.strip())
+            # Token may be expired — clear it so sign.sh auto-unlocks next time
+            sub_env.pop("AWP_SESSION_TOKEN", None)
         return result.stdout
     except subprocess.TimeoutExpired:
         return '{"ok":false,"error":"sign request timeout"}'
@@ -883,9 +896,10 @@ def run_loop() -> None:
         # -- Wallet refresh --------------------------------------------------
         if time.monotonic() - last_unlock > UNLOCK_INTERVAL:
             if unlock_wallet():
-                log.info("[WALLET] refreshed")
+                log.info("[WALLET] refreshed token")
             else:
-                log.warning("[WALLET] refresh failed, continuing with current token")
+                # Token cleared by unlock_wallet() — sign.sh will auto-unlock
+                log.warning("[WALLET] refresh failed, cleared token for auto-unlock")
             last_unlock = time.monotonic()
 
         # -- Poll -------------------------------------------------------------
