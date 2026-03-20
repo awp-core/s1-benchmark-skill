@@ -173,6 +173,23 @@ The worker handles everything directly via `openclaw agent` CLI:
 
 No file queue, no cron jobs, no task directories. Simple and reliable.
 
+### Changing Notification Mode (No Restart Needed)
+
+Edit `/tmp/benchmark-worker-config.json` to change settings at runtime:
+
+```bash
+# Switch to realtime (message after every action)
+echo '{"notify_mode": "realtime"}' > /tmp/benchmark-worker-config.json
+
+# Switch to summary every 2 minutes
+echo '{"notify_mode": "summary", "notify_interval": 120}' > /tmp/benchmark-worker-config.json
+
+# Go silent
+echo '{"notify_mode": "silent"}' > /tmp/benchmark-worker-config.json
+```
+
+Changes take effect on the next loop cycle (within seconds). No restart needed.
+
 ---
 
 ## Report Status
