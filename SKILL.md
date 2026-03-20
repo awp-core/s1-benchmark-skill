@@ -180,17 +180,25 @@ If "not registered":
 
 The worker auto-generates an instance ID from the wallet address (last 6 hex chars).
 All files and agent names are suffixed with this ID, so multiple workers on the same
-machine don't conflict. You can also set `BENCHMARK_INSTANCE_ID` explicitly.
+machine don't conflict.
+
+Launch the worker and **capture its startup JSON** — it tells you all the paths:
 
 ```bash
-# No need to set INSTANCE_ID — auto-derived from wallet address
-nohup python3 {baseDir}/scripts/benchmark-worker.py >> /tmp/benchmark-worker.log 2>&1 &
+python3 {baseDir}/scripts/benchmark-worker.py > /tmp/benchmark-worker-startup.json 2>> /tmp/benchmark-worker.log &
 WORKER_PID=$!
 sleep 3
 
-# Read the instance ID from status file to configure notifications
-INSTANCE_ID=$(jq -r '.address' /tmp/benchmark-worker-*-status.json 2>/dev/null | head -1 | grep -o '.\{6\}$')
-cat > "/tmp/benchmark-worker-${INSTANCE_ID}-config.json" << EOF
+# Read instance info from startup output
+STARTUP=$(cat /tmp/benchmark-worker-startup.json)
+INSTANCE_ID=$(echo "$STARTUP" | jq -r '.instance_id')
+AGENT_ID=$(echo "$STARTUP" | jq -r '.agent')
+CONFIG_FILE=$(echo "$STARTUP" | jq -r '.files.config')
+STATUS_FILE=$(echo "$STARTUP" | jq -r '.files.status')
+HISTORY_FILE=$(echo "$STARTUP" | jq -r '.files.history')
+
+# Configure notifications
+cat > "$CONFIG_FILE" << EOF
 {
   "notify_channel": "<detected_channel>",
   "notify_target": "<detected_target>",
@@ -200,11 +208,28 @@ cat > "/tmp/benchmark-worker-${INSTANCE_ID}-config.json" << EOF
 EOF
 ```
 
+The startup JSON looks like:
+```json
+{
+  "ok": true,
+  "instance_id": "b72e7",
+  "agent": "benchmark-worker-b72e7",
+  "files": {
+    "status": "/tmp/benchmark-worker-b72e7-status.json",
+    "history": "/tmp/benchmark-worker-b72e7-history.jsonl",
+    "config": "/tmp/benchmark-worker-b72e7-config.json",
+    "log": "/tmp/benchmark-worker-b72e7.log"
+  }
+}
+```
+
+Use these paths for ALL subsequent commands (status, logs, config, history queries).
+
 ### Step 5: Print Setup Status
 
 ```
 [1/4] wallet       <short_address> ✓
-[2/4] agent        benchmark-worker-<instance_id> ✓
+[2/4] agent        <agent_id> ✓
 [3/4] api          connected ✓
 [4/4] notifications  realtime via <channel> ✓
 

@@ -1098,7 +1098,23 @@ def main() -> None:
     agent_id = detect_agent()
     log.info("[SETUP] agent: %s", agent_id)
 
-    print(json.dumps({"ok": True, "message": "worker started", "address": address}))
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "message": "worker started",
+                "address": address,
+                "instance_id": INSTANCE_ID,
+                "agent": agent_id,
+                "files": {
+                    "status": STATUS_FILE,
+                    "history": HISTORY_FILE,
+                    "config": CONFIG_FILE,
+                    "log": LOG_FILE,
+                },
+            }
+        )
+    )
 
     # 5. Write initial config file (if not exists) so user/agent can edit it
     if not os.path.exists(CONFIG_FILE):
