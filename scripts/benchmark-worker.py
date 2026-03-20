@@ -900,6 +900,36 @@ def _fetch_server_stats() -> dict | None:
         return None
 
 
+def _fetch_score_distribution() -> dict[int, int]:
+    """Fetch answer score distribution from scored assignments."""
+    dist: dict[int, int] = {}
+    try:
+        raw = signed_request("GET", "/api/v1/my/assignments")
+        data = json.loads(raw).get("data", [])
+        for a in data:
+            if a.get("status") == "scored" and "score" in a:
+                score = int(a["score"])
+                dist[score] = dist.get(score, 0) + 1
+    except (json.JSONDecodeError, AttributeError, ValueError):
+        pass
+    return dist
+
+
+def _fetch_question_score_distribution() -> dict[int, int]:
+    """Fetch question score distribution from scored questions."""
+    dist: dict[int, int] = {}
+    try:
+        raw = signed_request("GET", "/api/v1/my/questions")
+        data = json.loads(raw).get("data", [])
+        for q in data:
+            if q.get("status") == "scored" and "score" in q:
+                score = int(q["score"])
+                dist[score] = dist.get(score, 0) + 1
+    except (json.JSONDecodeError, AttributeError, ValueError):
+        pass
+    return dist
+
+
 def _format_stats_brief() -> str:
     """One-line stats for realtime notifications."""
     uptime = int(time.monotonic() - _start_time)
@@ -932,22 +962,42 @@ def _format_stats_detail() -> str:
         f"A: {total} ({ai} ai / {fb} fb) | Q: {asked} | E: {errors} | {hours}h{minutes}m"
     )
 
-    # Try to get server-side stats (scores, rewards)
+    # Server-side stats (scores, rewards)
     server = _fetch_server_stats()
     if server:
         scored_a = server.get("scored_answers", server.get("scoredAnswers", "?"))
         scored_q = server.get("scored_asks", server.get("scoredAsks", "?"))
-        ans_avg = server.get("answer_score_avg", server.get("answerScoreAvg", "?"))
-        ask_avg = server.get("ask_score_avg", server.get("askScoreAvg", "?"))
         composite = server.get("composite_score", server.get("compositeScore", "?"))
         reward = server.get("total_reward", server.get("totalReward", "?"))
         lines.append(f"Scored: {scored_a} answers / {scored_q} questions")
-        if ans_avg != "?" or ask_avg != "?":
-            lines.append(
-                f"Avg score: A {ans_avg} / Q {ask_avg} | Composite: {composite}"
-            )
+        if composite != "?":
+            lines.append(f"Composite: {composite}")
         if reward != "?" and reward:
             lines.append(f"Rewards: {reward}")
+
+    # Answer score distribution
+    ans_dist = _fetch_score_distribution()
+    if ans_dist:
+        lines.append("Answer scores:")
+        for score in sorted(ans_dist.keys(), reverse=True):
+            count = ans_dist[score]
+            label = {5: "correct", 3: "wrong", 2: "misjudged", 0: "timeout"}.get(
+                score, ""
+            )
+            bar = "#" * min(count, 20)
+            lines.append(f"  {score}: {bar} {count} {label}")
+
+    # Question score distribution
+    q_dist = _fetch_question_score_distribution()
+    if q_dist:
+        lines.append("Question scores:")
+        for score in sorted(q_dist.keys(), reverse=True):
+            count = q_dist[score]
+            label = {5: "great", 4: "good", 3: "ok", 2: "easy", 0: "invalid"}.get(
+                score, ""
+            )
+            bar = "#" * min(count, 20)
+            lines.append(f"  {score}: {bar} {count} {label}")
 
     emoji = "\U0001f635" if (total > 0 and fb > ai) else "\U0001f60a"
     lines[-1] = lines[-1] + f" {emoji}"
