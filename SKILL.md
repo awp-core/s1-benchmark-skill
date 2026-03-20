@@ -43,8 +43,8 @@ You manage an autonomous benchmark worker. The architecture has two parts:
    responses to `/tmp/benchmark-tasks/done/`. The worker picks up your responses
    and submits them to the API.
 
-This file-based queue means you don't need to run continuously. A cron job wakes
-you up every minute to process any pending tasks.
+This file-based queue means you don't need to run continuously. OpenClaw's built-in
+cron system wakes you up every minute to process any pending tasks.
 
 ## Decide What To Do
 
@@ -119,22 +119,27 @@ else
 fi
 ```
 
-### Step 4: Set Up Cron for Task Processing
+### Step 4: Set Up OpenClaw Cron for Task Processing
 
 The worker writes tasks that need LLM reasoning to `/tmp/benchmark-tasks/pending/`.
-Set up a cron job to process them every minute.
-
-**Important:** Replace `YOUR_AGENT_ID` below with your actual agent ID (e.g., `main`).
-You can find it with `openclaw agents list` or use the agent ID from your current session.
+Use OpenClaw's **built-in cron system** to process them every minute. This uses the
+Gateway's internal RPC — no HTTP endpoints or CLI workarounds needed.
 
 ```bash
-# Determine agent ID (replace if needed)
-AGENT_ID="main"
-TASK_DIR="/tmp/benchmark-tasks"
+# Remove old cron job if exists
+openclaw cron remove benchmark-tasks 2>/dev/null || true
 
-# Add cron entry (idempotent — checks if already exists)
-CRON_CMD="cd $HOME && openclaw agent --agent $AGENT_ID --message 'Check $TASK_DIR/pending/ for benchmark tasks. For each .json file: read the prompt field, solve it, write your JSON response to $TASK_DIR/done/<same_filename>. Delete stale files older than 5 min.'"
-(crontab -l 2>/dev/null | grep -v 'benchmark-tasks' ; echo "* * * * * $CRON_CMD") | crontab -
+# Add new cron job: every minute, check for pending tasks
+openclaw cron add \
+  --name "benchmark-tasks" \
+  --cron "* * * * *" \
+  --session isolated \
+  --message "You are the benchmark task processor. Check /tmp/benchmark-tasks/pending/ for .json files. For each file: 1) Read it with cat. 2) Read the 'prompt' field. 3) Think and solve the task. 4) For type 'answer': write {\"valid\": true/false, \"answer\": \"...\"} to /tmp/benchmark-tasks/done/<task_id>.json. For type 'ask': write {\"question\": \"...\", \"answer\": \"...\"} to /tmp/benchmark-tasks/done/<task_id>.json. 5) Use atomic writes: write to .tmp.json first then mv to .json. 6) Delete stale pending files older than 5 minutes. If no pending files, do nothing."
+```
+
+Verify the cron job was created:
+```bash
+openclaw cron list
 ```
 
 Report to user:
@@ -142,7 +147,7 @@ Report to user:
 Worker started (PID XXXX)
   Address: 0x...
   Task queue: /tmp/benchmark-tasks/
-  Cron: every minute
+  Cron: openclaw built-in, every minute
 ```
 
 ---
@@ -262,8 +267,8 @@ STALE=$((NOW - LAST))
 ```bash
 PID=$(jq -r '.pid' "$STATUS_FILE" 2>/dev/null)
 kill "$PID" 2>/dev/null && echo "Worker stopped (PID $PID)" || echo "Worker not running"
-# Optionally remove cron
-crontab -l 2>/dev/null | grep -v 'benchmark-tasks' | crontab -
+# Remove the openclaw cron job
+openclaw cron remove benchmark-tasks 2>/dev/null || true
 ```
 
 ---
