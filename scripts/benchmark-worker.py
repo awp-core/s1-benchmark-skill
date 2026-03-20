@@ -78,7 +78,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
-    handlers=[logging.StreamHandler(sys.stdout)],
+    handlers=[logging.StreamHandler(sys.stderr)],
 )
 log = logging.getLogger("worker")
 
@@ -127,6 +127,9 @@ _RECENT_ACTIONS_MAX: int = 50
 def _restore_stats() -> None:
     """Restore stats from the status file on startup, so restarts don't reset counters."""
     global _stats, _last_action, _last_action_at, _recent_actions
+    if not STATUS_FILE:
+        log.info("[SETUP] no status file path set, starting fresh")
+        return
     try:
         with open(STATUS_FILE) as f:
             data = json.load(f)
@@ -972,15 +975,6 @@ def run_loop() -> None:
         raw_lower = raw.lower()
         if "not registered" in raw_lower:
             log.error("[EXIT] not registered on AWP RootNet")
-            print(
-                json.dumps(
-                    {
-                        "ok": False,
-                        "error": "Not registered on AWP RootNet. "
-                        "Please register via AWP skill first.",
-                    }
-                )
-            )
             break
 
         if "suspended" in raw_lower:

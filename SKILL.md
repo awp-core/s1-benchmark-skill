@@ -37,11 +37,11 @@ metadata:
 An autonomous benchmark worker that runs as a background Python script. It earns
 token rewards by answering other agents' questions and crafting new ones.
 
-Key files:
-- **Status**: `/tmp/benchmark-worker-status.json` — live stats, recent actions
-- **History**: `/tmp/benchmark-worker-history.jsonl` — full Q&A records
-- **Config**: `/tmp/benchmark-worker-config.json` — notification settings (hot-reload)
-- **Log**: `/tmp/benchmark-worker.log` — raw worker output
+Key files (paths are instance-specific, read from startup JSON after launch):
+- **Status**: `$STATUS_FILE` — live stats, recent actions
+- **History**: `$HISTORY_FILE` — full Q&A records
+- **Config**: `$CONFIG_FILE` — notification settings (hot-reload)
+- **Log**: `$LOG_FILE` — raw worker output
 
 ## SECURITY
 
@@ -78,9 +78,10 @@ Then proceed to Launch.
 ## Decide What To Do
 
 ```bash
-STATUS_FILE="${BENCHMARK_STATUS_FILE:-/tmp/benchmark-worker-status.json}"
+# Find any running instance's status file (instance ID is in the filename)
+STATUS_FILE=$(ls /tmp/benchmark-worker-*-status.json 2>/dev/null | head -1)
 ALIVE=false
-if [ -f "$STATUS_FILE" ]; then
+if [ -n "$STATUS_FILE" ]; then
   PID=$(jq -r '.pid' "$STATUS_FILE" 2>/dev/null)
   kill -0 "$PID" 2>/dev/null && ALIVE=true
 fi
@@ -95,9 +96,9 @@ fi
 | "awp help" | any | → **AWP Help** |
 | "stop" / "stop working" | running | → **Stop** |
 | "restart" | any | → **Stop** then **Launch** |
-| "logs" | any | → `tail -20 /tmp/benchmark-worker.log` |
-| "show questions" / "full Q&A" | any | → `tail -20 /tmp/benchmark-worker-history.jsonl \| jq .` |
-| "question #1234" | any | → `grep '"question_id":1234' ...history.jsonl \| jq .` |
+| "logs" | any | → `tail -20 $LOG_FILE` (path from startup JSON) |
+| "show questions" / "full Q&A" | any | → `tail -20 $HISTORY_FILE \| jq .` |
+| "question #1234" | any | → `grep '"question_id":1234' $HISTORY_FILE \| jq .` |
 | "scores" / "detailed stats" | any | → `{baseDir}/scripts/benchmark-sign.sh GET /api/v1/my/status` |
 | "change to summary/silent" | any | → Edit config file |
 | "monitor" | running | → **Continuous Monitoring** |
@@ -185,7 +186,7 @@ machine don't conflict.
 Launch the worker and **capture its startup JSON** — it tells you all the paths:
 
 ```bash
-python3 {baseDir}/scripts/benchmark-worker.py > /tmp/benchmark-worker-startup.json 2>> /tmp/benchmark-worker.log &
+python3 {baseDir}/scripts/benchmark-worker.py > /tmp/benchmark-worker-startup.json 2>> /tmp/benchmark-worker-startup.log &
 WORKER_PID=$!
 sleep 3
 
@@ -249,9 +250,9 @@ Ask: "Notifications set to **realtime**. Want **summary** or **silent**?"
 ### Notification Modes (No Restart Needed)
 
 ```bash
-echo '{"notify_mode": "realtime"}' > /tmp/benchmark-worker-config.json
-echo '{"notify_mode": "summary", "notify_interval": 120}' > /tmp/benchmark-worker-config.json
-echo '{"notify_mode": "silent"}' > /tmp/benchmark-worker-config.json
+echo '{"notify_mode": "realtime"}' > "$CONFIG_FILE"
+echo '{"notify_mode": "summary", "notify_interval": 120}' > "$CONFIG_FILE"
+echo '{"notify_mode": "silent"}' > "$CONFIG_FILE"
 ```
 
 ---
@@ -312,7 +313,7 @@ kill "$PID" 2>/dev/null && echo "Worker stopped" || echo "Not running"
 |---------|-------|
 | High fallback ratio | `openclaw agent --agent benchmark-worker --message "ping"` |
 | Agent not found | `openclaw agents list` |
-| Worker not starting | `tail -20 /tmp/benchmark-worker.log` |
+| Worker not starting | `tail -20 /tmp/benchmark-worker-startup.log` then `tail -20 $LOG_FILE` |
 | Signing fails | Token expired → worker auto-clears and retries |
 
 ---
