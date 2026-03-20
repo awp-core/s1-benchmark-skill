@@ -14,6 +14,24 @@
 
 set -euo pipefail
 
+# 自动检测 awp-wallet 路径（OpenClaw 可能不在 $PATH 中）
+_AWP_BIN="awp-wallet"
+AWP_WALLET=""
+for candidate in \
+  "$HOME/.local/bin/$_AWP_BIN" \
+  "$HOME/.awp/bin/$_AWP_BIN" \
+  "/usr/local/bin/$_AWP_BIN" \
+  "$(command -v "$_AWP_BIN" 2>/dev/null)"; do
+  if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+    AWP_WALLET="$candidate"
+    break
+  fi
+done
+if [ -z "$AWP_WALLET" ]; then
+  echo "[!] $_AWP_BIN not found." >&2
+  exit 1
+fi
+
 METHOD="${1:?Usage: benchmark-sign.sh METHOD PATH [BODY]}"
 API_PATH="${2:?Usage: benchmark-sign.sh METHOD PATH [BODY]}"
 BODY="${3:-}"
@@ -22,14 +40,14 @@ BENCHMARK_API_URL="${BENCHMARK_API_URL:-https://tapis1.awp.sh}"
 
 # Auto-unlock wallet if no session token cached
 if [ -z "${AWP_SESSION_TOKEN:-}" ]; then
-  AWP_SESSION_TOKEN=$(awp-wallet unlock --duration 3600 2>/dev/null \
+  AWP_SESSION_TOKEN=$($AWP_WALLET unlock --duration 3600 2>/dev/null \
     | grep -o '"token":"[^"]*"' | head -1 | cut -d'"' -f4)
   export AWP_SESSION_TOKEN
 fi
 
 # Auto-detect wallet address if not cached
 if [ -z "${WALLET_ADDRESS:-}" ]; then
-  WALLET_ADDRESS=$(awp-wallet receive 2>/dev/null \
+  WALLET_ADDRESS=$($AWP_WALLET receive 2>/dev/null \
     | grep -oi '0x[0-9a-fA-F]\{40\}' | head -1)
   export WALLET_ADDRESS
 fi
@@ -39,7 +57,7 @@ BODY_HASH=$(printf '%s' "$BODY" | sha256sum | cut -d' ' -f1)
 MESSAGE="${METHOD}${API_PATH}${TIMESTAMP}${BODY_HASH}"
 
 # Sign via AWP Wallet (EIP-191 personal_sign)
-SIGN_RESULT=$(awp-wallet sign-message \
+SIGN_RESULT=$($AWP_WALLET sign-message \
   --token "$AWP_SESSION_TOKEN" --message "$MESSAGE" 2>/dev/null)
 SIGNATURE=$(echo "$SIGN_RESULT" | grep -o '"signature":"[^"]*"' | head -1 | cut -d'"' -f4)
 [ -z "$SIGNATURE" ] && SIGNATURE="$SIGN_RESULT"

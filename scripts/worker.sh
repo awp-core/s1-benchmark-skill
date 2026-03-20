@@ -22,6 +22,24 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASEDIR="$(dirname "$SCRIPT_DIR")"
 LOGFILE="/tmp/awp_worker.log"
 
+# 自动检测 awp-wallet 路径（OpenClaw 可能不在 $PATH 中）
+_AWP_BIN="awp-wallet"
+AWP_WALLET=""
+for candidate in \
+  "$HOME/.local/bin/$_AWP_BIN" \
+  "$HOME/.awp/bin/$_AWP_BIN" \
+  "/usr/local/bin/$_AWP_BIN" \
+  "$(command -v "$_AWP_BIN" 2>/dev/null)"; do
+  if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+    AWP_WALLET="$candidate"
+    break
+  fi
+done
+if [ -z "$AWP_WALLET" ]; then
+  echo "[!] $_AWP_BIN not found. Install it or set AWP_WALLET_PATH." >&2
+  exit 1
+fi
+
 PENDING_Q="/tmp/awp_q_pending.json"
 ANSWER_FILE="/tmp/awp_answer.json"
 QUESTION_FILE="/tmp/awp_question.json"
@@ -49,8 +67,8 @@ sign() {
 }
 
 refresh_token() {
-  awp-wallet unlock --duration 3600 >/dev/null 2>&1 || true
-  export WALLET_ADDRESS=$(awp-wallet receive 2>/dev/null | grep -oi '0x[0-9a-fA-F]\{40\}' | head -1)
+  $AWP_WALLET unlock --duration 3600 >/dev/null 2>&1 || true
+  export WALLET_ADDRESS=$($AWP_WALLET receive 2>/dev/null | grep -oi '0x[0-9a-fA-F]\{40\}' | head -1)
   LAST_TOKEN_REFRESH=$(date +%s)
   log "[TOKEN] wallet session refreshed"
 }
