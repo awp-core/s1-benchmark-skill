@@ -40,6 +40,8 @@ STATUS_FILE: str = os.environ.get(
     "BENCHMARK_STATUS_FILE", "/tmp/benchmark-worker-status.json"
 )
 TASK_DIR: str = os.environ.get("BENCHMARK_TASK_DIR", "/tmp/benchmark-tasks")
+OPENCLAW_AGENT: str = os.environ.get("OPENCLAW_AGENT", "")  # auto-detected at startup
+CLI_TIMEOUT: int = 120  # max seconds for a single CLI call
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -199,7 +201,170 @@ def signed_request(method: str, path: str, body: str = "") -> str:
 
 
 # ---------------------------------------------------------------------------
-# Task queue: file-based communication with OpenClaw agent
+# OpenClaw agent: direct CLI call (preferred) with file queue fallback
+# ---------------------------------------------------------------------------
+
+_agent_id: str = ""  # detected at startup
+_cli_available: bool = True  # set to False after repeated failures
+_cli_fail_count: int = 0
+_CLI_FAIL_THRESHOLD: int = 3  # disable CLI after this many consecutive failures
+
+
+def detect_agent() -> str:
+    """Detect available OpenClaw agent ID at startup."""
+    global _agent_id
+
+    # If explicitly set via env, use that
+    if OPENCLAW_AGENT:
+        _agent_id = OPENCLAW_AGENT
+        log.info("[AGENT] using configured agent: %s", _agent_id)
+        return _agent_id
+
+    # Try openclaw agents list
+    try:
+        result = subprocess.run(
+            ["openclaw", "agents", "list"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            # Parse agent list — look for first agent ID
+            for line in result.stdout.strip().split("\n"):
+                line = line.strip()
+                if not line or line.startswith(("-", "#", "NAME", "name")):
+                    continue
+                # Try JSON format
+                try:
+                    data = json.loads(line)
+                    if isinstance(data, list) and data:
+                        _agent_id = str(data[0].get("id", data[0].get("name", "main")))
+                        log.info("[AGENT] detected agent: %s", _agent_id)
+                        return _agent_id
+                except json.JSONDecodeError:
+                    pass
+                # Try plain text: first word is agent ID
+                agent_id = line.split()[0].strip()
+                if agent_id:
+                    _agent_id = agent_id
+                    log.info("[AGENT] detected agent: %s", _agent_id)
+                    return _agent_id
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+
+    # Default to "main"
+    _agent_id = "main"
+    log.info("[AGENT] defaulting to agent: %s", _agent_id)
+    return _agent_id
+
+
+def _probe_cli() -> bool:
+    """Quick probe to check if openclaw agent CLI is responsive."""
+    try:
+        result = subprocess.run(
+            ["openclaw", "agent", "--agent", _agent_id, "--message", "ping"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        return result.returncode == 0 and result.stdout.strip() != ""
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return False
+
+
+def call_agent(prompt: str, timeout: float = CLI_TIMEOUT) -> str | None:
+    """Call OpenClaw agent via CLI. Returns text response or None on failure.
+
+    This is the fast path — direct synchronous call, no file queue.
+    """
+    global _cli_available, _cli_fail_count
+
+    if not _cli_available:
+        return None
+
+    try:
+        result = subprocess.run(
+            ["openclaw", "agent", "--agent", _agent_id, "--message", prompt],
+            capture_output=True,
+            text=True,
+            timeout=int(timeout) + 10,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            _cli_fail_count = 0  # reset on success
+            text = result.stdout.strip()
+            # Try to extract from JSON if the response is structured
+            try:
+                data = json.loads(text)
+                # If it's a structured response, return the text content
+                if isinstance(data, dict) and "output" in data:
+                    extracted = _extract_text_from_agent_response(data)
+                    if extracted:
+                        return extracted
+            except json.JSONDecodeError:
+                pass
+            return text
+        # CLI returned error
+        _cli_fail_count += 1
+        if result.stderr.strip():
+            log.warning("[AGENT] CLI stderr: %s", result.stderr.strip()[:200])
+        log.warning(
+            "[AGENT] CLI failed (exit %d, fail %d/%d)",
+            result.returncode,
+            _cli_fail_count,
+            _CLI_FAIL_THRESHOLD,
+        )
+    except subprocess.TimeoutExpired:
+        _cli_fail_count += 1
+        log.warning(
+            "[AGENT] CLI timeout (fail %d/%d)",
+            _cli_fail_count,
+            _CLI_FAIL_THRESHOLD,
+        )
+    except FileNotFoundError:
+        log.warning("[AGENT] 'openclaw' command not found, disabling CLI")
+        _cli_available = False
+        return None
+
+    # Disable CLI after too many consecutive failures
+    if _cli_fail_count >= _CLI_FAIL_THRESHOLD:
+        log.warning(
+            "[AGENT] CLI disabled after %d consecutive failures", _cli_fail_count
+        )
+        _cli_available = False
+    return None
+
+
+def _extract_text_from_agent_response(data: dict) -> str | None:
+    """Extract text from a structured agent response."""
+    for item in reversed(data.get("output", [])):
+        for block in reversed(item.get("content", [])):
+            if "text" in block:
+                return block["text"]
+        if "text" in item:
+            return item["text"]
+    choices = data.get("choices", [])
+    if choices:
+        msg = choices[0].get("message", {})
+        return msg.get("content")
+    return None
+
+
+def re_enable_cli() -> None:
+    """Periodically try to re-enable CLI if it was disabled."""
+    global _cli_available, _cli_fail_count
+    if _cli_available:
+        return
+    log.info("[AGENT] probing CLI availability...")
+    if _probe_cli():
+        _cli_available = True
+        _cli_fail_count = 0
+        log.info("[AGENT] CLI re-enabled")
+    else:
+        log.info("[AGENT] CLI still unavailable, using file queue")
+
+
+# ---------------------------------------------------------------------------
+# Task queue: file-based communication with OpenClaw agent (fallback)
 # ---------------------------------------------------------------------------
 
 
@@ -382,22 +547,32 @@ def _handle_answer(assigned: dict) -> None:
         except (ValueError, TypeError):
             pass
 
-    # Write task for agent
-    task_id = f"answer-{qid}-{int(time.time())}"
     prompt = build_answer_prompt(assigned)
-    _write_task(
-        task_id,
-        {
-            "type": "answer",
-            "question_id": qid,
-            "prompt": prompt,
-            "deadline": reply_ddl,
-            "timeout_seconds": int(timeout),
-        },
-    )
+    response: dict | None = None
 
-    # Wait for agent response
-    response = _wait_for_response(task_id, timeout)
+    # Try 1: Direct CLI call (fast path)
+    cli_text = call_agent(prompt, timeout=min(timeout, CLI_TIMEOUT))
+    if cli_text:
+        response = parse_json_response(cli_text)
+        if response:
+            log.info("[A#%s] got CLI response", qid)
+
+    # Try 2: File queue (fallback, waits for cron agent)
+    if response is None and _cli_available is False:
+        task_id = f"answer-{qid}-{int(time.time())}"
+        _write_task(
+            task_id,
+            {
+                "type": "answer",
+                "question_id": qid,
+                "prompt": prompt,
+                "deadline": reply_ddl,
+                "timeout_seconds": int(timeout),
+            },
+        )
+        response = _wait_for_response(task_id, timeout)
+        if response:
+            log.info("[A#%s] got file queue response", qid)
 
     is_fallback = False
     if response and "answer" in response:
@@ -455,21 +630,30 @@ def _handle_ask() -> None:
     chosen = random.choice(sets)
     bs_id = chosen.get("bs_id", "unknown")
 
-    # Write task for agent
-    task_id = f"ask-{bs_id}-{int(time.time())}"
     prompt = build_question_prompt(chosen)
-    _write_task(
-        task_id,
-        {
-            "type": "ask",
-            "bs_id": bs_id,
-            "prompt": prompt,
-            "timeout_seconds": TASK_WAIT_TIMEOUT,
-        },
-    )
+    response: dict | None = None
 
-    # Wait for agent response
-    response = _wait_for_response(task_id, TASK_WAIT_TIMEOUT)
+    # Try 1: Direct CLI call
+    cli_text = call_agent(prompt, timeout=CLI_TIMEOUT)
+    if cli_text:
+        response = parse_json_response(cli_text)
+        if response:
+            log.info("[ASK] got CLI response")
+
+    # Try 2: File queue fallback
+    if response is None and _cli_available is False:
+        task_id = f"ask-{bs_id}-{int(time.time())}"
+        _write_task(
+            task_id,
+            {
+                "type": "ask",
+                "bs_id": bs_id,
+                "prompt": prompt,
+                "timeout_seconds": TASK_WAIT_TIMEOUT,
+            },
+        )
+        response = _wait_for_response(task_id, TASK_WAIT_TIMEOUT)
+
     if not response or "question" not in response or "answer" not in response:
         log.warning("[ASK] no valid agent response, skipping")
         return
@@ -482,20 +666,25 @@ def _handle_ask() -> None:
     result = signed_request("POST", "/api/v1/questions", body)
     result_lower = result.lower()
 
-    # Handle duplicate: write a new task and retry once
+    # Handle duplicate: retry once via same CLI-first strategy
     if "duplicate" in result_lower or "similar" in result_lower:
         log.info("[ASK] duplicate, retrying once")
-        task_id2 = f"ask-{bs_id}-{int(time.time())}-retry"
-        _write_task(
-            task_id2,
-            {
-                "type": "ask",
-                "bs_id": bs_id,
-                "prompt": prompt,
-                "timeout_seconds": TASK_WAIT_TIMEOUT,
-            },
-        )
-        response2 = _wait_for_response(task_id2, TASK_WAIT_TIMEOUT)
+        response2: dict | None = None
+        cli_text2 = call_agent(prompt, timeout=CLI_TIMEOUT)
+        if cli_text2:
+            response2 = parse_json_response(cli_text2)
+        if response2 is None and _cli_available is False:
+            task_id2 = f"ask-{bs_id}-{int(time.time())}-retry"
+            _write_task(
+                task_id2,
+                {
+                    "type": "ask",
+                    "bs_id": bs_id,
+                    "prompt": prompt,
+                    "timeout_seconds": TASK_WAIT_TIMEOUT,
+                },
+            )
+            response2 = _wait_for_response(task_id2, TASK_WAIT_TIMEOUT)
         if response2 and "question" in response2 and "answer" in response2:
             q2, a2 = str(response2["question"]), str(response2["answer"])
             body2 = json.dumps({"bs_id": bs_id, "question": q2, "answer": a2})
@@ -557,12 +746,18 @@ def run_loop() -> None:
     counter = 0
     last_unlock = time.monotonic()
     last_cleanup = time.monotonic()
+    last_cli_probe = time.monotonic()
 
     while running:
         # -- Periodic cleanup of stale task files ----------------------------
         if time.monotonic() - last_cleanup > 120:  # every 2 minutes
             _cleanup_stale_files()
             last_cleanup = time.monotonic()
+
+        # -- Periodically try to re-enable CLI if disabled -------------------
+        if time.monotonic() - last_cli_probe > 300:  # every 5 minutes
+            re_enable_cli()
+            last_cli_probe = time.monotonic()
 
         # -- Wallet refresh --------------------------------------------------
         if time.monotonic() - last_unlock > UNLOCK_INTERVAL:
@@ -693,10 +888,24 @@ def main() -> None:
 
     short_addr = f"{address[:6]}...{address[-4:]}"
     log.info("[SETUP] wallet %s | api connected | ready", short_addr)
-    log.info("[SETUP] task dir: %s", TASK_DIR)
+
+    # 4. Detect OpenClaw agent and probe CLI
+    agent_id = detect_agent()
+    cli_ok = _probe_cli()
+    log.info(
+        "[SETUP] agent: %s | CLI: %s | task dir: %s",
+        agent_id,
+        "available" if cli_ok else "unavailable (using file queue)",
+        TASK_DIR,
+    )
+    if not cli_ok:
+        global _cli_available
+        _cli_available = False
+        log.info("[SETUP] will use file queue with cron for LLM tasks")
+
     print(json.dumps({"ok": True, "message": "worker started", "address": address}))
 
-    # 4. Write initial status and start main loop
+    # 5. Write initial status and start main loop
     _record_action("[SETUP] ready")
     _write_status()
     run_loop()
