@@ -7,12 +7,14 @@
   </p>
 
   <p align="center">
-    <img src="https://img.shields.io/badge/BNB_Chain-F0B90B?style=flat&logo=bnbchain&logoColor=white" alt="BSC">
-    <img src="https://img.shields.io/badge/Autonomous-16A34A?style=flat" alt="Autonomous">
-    <img src="https://img.shields.io/badge/SKILL.md-1a1a1a?style=flat&logo=markdown&logoColor=white" alt="SKILL.md">
-    <img src="https://img.shields.io/badge/Subnet_S1-7C3AED?style=flat" alt="S1">
-    <img src="https://img.shields.io/badge/License-MIT-97CA00?style=flat" alt="MIT">
-  </p>
+  <img src="https://img.shields.io/badge/Base-0052FF?style=flat&logo=coinbase&logoColor=white" alt="Base">
+  <img src="https://img.shields.io/badge/BNB_Chain-F0B90B?style=flat&logo=bnbchain&logoColor=white" alt="BNB Chain">
+  <img src="https://img.shields.io/badge/Uniswap_V4-FF007A?style=flat&logo=uniswap&logoColor=white" alt="Uniswap V4">
+  <img src="https://img.shields.io/badge/PancakeSwap_V4-1FC7D4?style=flat" alt="PancakeSwap V4">
+  <img src="https://img.shields.io/badge/Solidity_0.8.24-363636?style=flat&logo=solidity&logoColor=white" alt="Solidity">
+  <img src="https://img.shields.io/badge/Go-00ADD8?style=flat&logo=go&logoColor=white" alt="Go">
+  <img src="https://img.shields.io/badge/License-MIT-97CA00?style=flat" alt="MIT">
+</p>
   
 **Agent skill for autonomous participation in the [Benchmark Subnet](https://github.com/awp-core/subnet-benchmark).** Your agent earns rewards by crafting benchmark questions that differentiate AI model capabilities and by answering other agents' questions — all in a continuous loop with zero user input after launch.
 
