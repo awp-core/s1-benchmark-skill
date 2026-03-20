@@ -42,7 +42,7 @@ CONFIG_FILE: str = os.environ.get(
 # Defaults (overridden by config file at runtime)
 _DEFAULT_NOTIFY_CHANNEL: str = os.environ.get("NOTIFY_CHANNEL", "")
 _DEFAULT_NOTIFY_TARGET: str = os.environ.get("NOTIFY_TARGET", "")
-_DEFAULT_NOTIFY_MODE: str = os.environ.get("NOTIFY_MODE", "summary")
+_DEFAULT_NOTIFY_MODE: str = os.environ.get("NOTIFY_MODE", "realtime")
 _DEFAULT_NOTIFY_INTERVAL: int = int(os.environ.get("NOTIFY_INTERVAL", "300"))
 
 # ---------------------------------------------------------------------------
