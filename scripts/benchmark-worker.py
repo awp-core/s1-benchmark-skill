@@ -366,14 +366,12 @@ def call_agent(prompt: str, timeout: float = CLI_TIMEOUT) -> str | None:
     instead of blocking for the full timeout duration.
     """
     try:
-        # Rotate through a small pool of session IDs to prevent context
-        # accumulation (which causes Anthropic rate limits at 229k+ tokens).
-        # Pool of 8 means each session is reused every ~40s (8 * 5s poll),
-        # by which time the previous context is gone. This avoids creating
-        # unlimited orphaned sessions in the gateway.
+        # Each call MUST use a unique session ID. Reusing a session-id
+        # appends to the existing context (OpenClaw sessions are append-only).
+        # This would hit Anthropic's long-context rate limit after ~50 calls.
         global _session_counter
         _session_counter += 1
-        session_id = f"bw-{INSTANCE_ID}-{_session_counter % 8}"
+        session_id = f"bw-{INSTANCE_ID}-{int(time.time())}-{_session_counter}"
         proc = subprocess.Popen(
             [
                 "openclaw",
