@@ -882,7 +882,7 @@ _ASK_TITLES: list[str] = [
     "\u00bb Drip... A shadow stirred in Subnet #1",
 ]
 
-_SUMMARY_TITLE: str = "= Ahem! Debrief from Subnet #1"
+_SUMMARY_TITLE: str = "\u2193 Ahem! Debrief from Subnet #1"
 
 
 def _fetch_online_agents() -> int | None:
@@ -920,8 +920,9 @@ def _format_realtime(action: str, detail: dict | None = None) -> str:
             lines.append("```")
             lines.append(f"[Answer #{qid}] ({src})")
             lines.append(f"Q: {detail.get('question', '')[:500]}")
+            lines.append("---")
+            lines.append(f"A: {detail.get('answer', '')[:500]}")
             lines.append("```")
-            lines.append(f"**A: {detail.get('answer', '')[:500]}**")
         elif action_type == "ask":
             lines.append("```")
             lines.append(f"[Ask #{qid}]")
