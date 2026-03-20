@@ -549,6 +549,7 @@ def _handle_answer(assigned: dict) -> None:
         action,
         {
             "type": "answer",
+            "question_id": qid,
             "question": question_text,
             "answer": answer,
             "fallback": is_fallback,
@@ -613,7 +614,9 @@ def _handle_ask() -> None:
                     "answer": answer,
                 }
             )
-            _notify_action(action, {"type": "ask", "question": question})
+            _notify_action(
+                action, {"type": "ask", "question_id": new_id, "question": question}
+            )
         else:
             log.warning("[ASK] err: %s", rdata.get("error", "unknown"))
             _stats["errors"] += 1
@@ -708,21 +711,24 @@ def _format_realtime(action: str, detail: dict | None = None) -> str:
     """Format a realtime notification with 3-section layout."""
     lines: list[str] = []
 
-    # Section 1: Title (bold)
-    lines.append("\U0001f419 *Bloop! Fresh catch from Subnet #1*")
+    # Section 1: Title (bold, Telegram markdown)
+    lines.append("\U0001f419 **Bloop! Fresh catch from Subnet #1**")
     lines.append("")
 
     # Section 2: Action detail (code block for gray background)
     if detail:
+        qid = detail.get("question_id", "?")
         if detail.get("type") == "answer":
             src = "ai" if not detail.get("fallback") else "fallback"
             lines.append("```")
+            lines.append(f"[Answer #{qid}] ({src})")
             lines.append(f"Q: {detail.get('question', '')[:60]}")
-            lines.append(f"A: {detail.get('answer', '')[:60]} ({src})")
+            lines.append(f"A: {detail.get('answer', '')[:60]}")
             lines.append("```")
         elif detail.get("type") == "ask":
             lines.append("```")
-            lines.append(f"New question: {detail.get('question', '')[:55]}")
+            lines.append(f"[Ask #{qid}]")
+            lines.append(f"Q: {detail.get('question', '')[:60]}")
             lines.append("```")
     else:
         lines.append(f"```\n{action}\n```")
@@ -737,8 +743,8 @@ def _format_summary() -> str:
     """Format a periodic summary with 3-section layout."""
     lines: list[str] = []
 
-    # Section 1: Title (bold)
-    lines.append("\U0001f419 *Bloop! Fresh catch from Subnet #1*")
+    # Section 1: Title (bold, Telegram markdown)
+    lines.append("\U0001f419 **Bloop! Fresh catch from Subnet #1**")
     lines.append("")
 
     # Section 2: Recent actions (code block for gray background)
@@ -749,10 +755,21 @@ def _format_summary() -> str:
 
     lines.append("```")
     lines.append(f"+{delta_a} answers, +{delta_q} questions")
+    lines.append("")
     recent = _recent_actions[-10:]
     if recent:
         for entry in recent:
-            lines.append(f"  {entry['action'][:65]}")
+            act = entry["action"]
+            if "[A#" in act:
+                lines.append(
+                    f"  Answer {act[act.find('#') :][:20]} {act[act.find('"') : act.rfind('"') + 1][:30]}"
+                )
+            elif "[ASK]" in act:
+                lines.append(
+                    f"  Ask    {act[act.find('#') :][:20]} {act[act.find('"') : act.rfind('"') + 1][:30]}"
+                )
+            else:
+                lines.append(f"  {act[:55]}")
     else:
         lines.append("  No recent activity")
     lines.append("```")
