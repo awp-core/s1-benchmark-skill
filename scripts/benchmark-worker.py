@@ -36,13 +36,14 @@ STATUS_FILE: str = os.environ.get(
     "BENCHMARK_STATUS_FILE", "/tmp/benchmark-worker-status.json"
 )
 OPENCLAW_AGENT: str = os.environ.get("OPENCLAW_AGENT", "")  # auto-detected at startup
-NOTIFY_CHANNEL: str = os.environ.get("NOTIFY_CHANNEL", "")  # e.g. "telegram"
-NOTIFY_TARGET: str = os.environ.get("NOTIFY_TARGET", "")  # e.g. chat_id
-# Notification mode: "realtime" (every action), "summary" (periodic), "silent" (none)
-NOTIFY_MODE: str = os.environ.get("NOTIFY_MODE", "summary")
-NOTIFY_INTERVAL: int = int(
-    os.environ.get("NOTIFY_INTERVAL", "300")
-)  # seconds between summary notifications
+CONFIG_FILE: str = os.environ.get(
+    "BENCHMARK_CONFIG_FILE", "/tmp/benchmark-worker-config.json"
+)
+# Defaults (overridden by config file at runtime)
+_DEFAULT_NOTIFY_CHANNEL: str = os.environ.get("NOTIFY_CHANNEL", "")
+_DEFAULT_NOTIFY_TARGET: str = os.environ.get("NOTIFY_TARGET", "")
+_DEFAULT_NOTIFY_MODE: str = os.environ.get("NOTIFY_MODE", "summary")
+_DEFAULT_NOTIFY_INTERVAL: int = int(os.environ.get("NOTIFY_INTERVAL", "300"))
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -623,9 +624,37 @@ def _handle_ask() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _read_config() -> dict:
+    """Read runtime config from config file, falling back to env var defaults.
+
+    Config file is hot-reloaded every time — edit the file to change behavior
+    without restarting the worker. Example /tmp/benchmark-worker-config.json:
+    {"notify_mode": "realtime", "notify_interval": 60}
+    """
+    config: dict = {
+        "notify_channel": _DEFAULT_NOTIFY_CHANNEL,
+        "notify_target": _DEFAULT_NOTIFY_TARGET,
+        "notify_mode": _DEFAULT_NOTIFY_MODE,
+        "notify_interval": _DEFAULT_NOTIFY_INTERVAL,
+    }
+    try:
+        raw = open(CONFIG_FILE).read()  # noqa: SIM115
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            for key in config:
+                if key in data:
+                    config[key] = data[key]
+    except (OSError, json.JSONDecodeError):
+        pass
+    return config
+
+
 def _send_message(message: str) -> None:
     """Send a message to the user via openclaw message send."""
-    if not NOTIFY_CHANNEL or not NOTIFY_TARGET:
+    cfg = _read_config()
+    channel = cfg["notify_channel"]
+    target = str(cfg["notify_target"])
+    if not channel or not target:
         return
     try:
         subprocess.run(
@@ -634,9 +663,9 @@ def _send_message(message: str) -> None:
                 "message",
                 "send",
                 "--channel",
-                NOTIFY_CHANNEL,
+                channel,
                 "--target",
-                NOTIFY_TARGET,
+                target,
                 "--message",
                 message,
             ],
@@ -650,13 +679,15 @@ def _send_message(message: str) -> None:
 
 def _notify_action(action: str) -> None:
     """Send per-action notification (only in realtime mode)."""
-    if NOTIFY_MODE == "realtime":
+    cfg = _read_config()
+    if cfg["notify_mode"] == "realtime":
         _send_message(action)
 
 
 def _notify_summary() -> None:
     """Send periodic summary notification (only in summary mode)."""
-    if NOTIFY_MODE == "summary":
+    cfg = _read_config()
+    if cfg["notify_mode"] == "summary":
         _send_message(_build_status_summary())
 
 
@@ -690,7 +721,9 @@ def run_loop() -> None:
 
     while running:
         # -- Periodic summary notification ------------------------------------
-        if NOTIFY_CHANNEL and time.monotonic() - last_notify >= NOTIFY_INTERVAL:
+        cfg = _read_config()
+        interval = int(cfg.get("notify_interval", _DEFAULT_NOTIFY_INTERVAL))
+        if cfg["notify_channel"] and time.monotonic() - last_notify >= interval:
             _notify_summary()
             last_notify = time.monotonic()
 
@@ -845,7 +878,25 @@ def main() -> None:
 
     print(json.dumps({"ok": True, "message": "worker started", "address": address}))
 
-    # 5. Write initial status and start main loop
+    # 5. Write initial config file (if not exists) so user/agent can edit it
+    if not os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, "w") as f:
+                json.dump(
+                    {
+                        "notify_channel": _DEFAULT_NOTIFY_CHANNEL,
+                        "notify_target": _DEFAULT_NOTIFY_TARGET,
+                        "notify_mode": _DEFAULT_NOTIFY_MODE,
+                        "notify_interval": _DEFAULT_NOTIFY_INTERVAL,
+                    },
+                    f,
+                    indent=2,
+                )
+            log.info("[SETUP] config file: %s", CONFIG_FILE)
+        except OSError:
+            pass
+
+    # 6. Write initial status and start main loop
     _record_action("[SETUP] ready")
     _write_status()
     run_loop()
