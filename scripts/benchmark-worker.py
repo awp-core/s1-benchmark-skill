@@ -1033,7 +1033,7 @@ def _format_stats_brief(is_fallback: bool = False) -> str:
     total = _stats["answers"]
     asked = _stats["questions_asked"]
 
-    parts = [f"A: {total} ({ai} ai / {fb} fb)", f"Q: {asked}", f"{hours}h{minutes}m"]
+    parts = [f"A: {total} ({ai}\u2713 / {fb}\u2717)", f"Q: {asked}", f"{hours}h{minutes}m"]
     online = _fetch_online_agents()
     if online is not None:
         parts.append(f"Online: {online}")
@@ -1054,7 +1054,7 @@ def _format_stats_detail() -> str:
     errors = _stats["errors"]
 
     lines: list[str] = []
-    first_line = f"A: {total} ({ai} ai / {fb} fb) | Q: {asked} | E: {errors} | {hours}h{minutes}m"
+    first_line = f"A: {total} ({ai}\u2713 / {fb}\u2717) | Q: {asked} | E: {errors} | {hours}h{minutes}m"
     online = _fetch_online_agents()
     if online is not None:
         first_line += f" | Online: {online}"
