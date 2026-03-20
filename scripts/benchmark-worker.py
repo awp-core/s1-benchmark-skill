@@ -33,7 +33,11 @@ NET_RETRY_SLEEP: int = 10  # seconds after network error
 SUSPEND_SLEEP: int = 60  # seconds when suspended
 UNLOCK_INTERVAL: int = 25 * 60  # re-unlock every 25 minutes
 ASK_INTERVAL: int = 60  # seconds between question submissions (API rate limit: 1/min)
-TASK_WAIT_TIMEOUT: int = 180  # max seconds to wait for agent response (> cron interval)
+ANSWER_CLI_TIMEOUT: int = 60  # seconds per CLI attempt for answering
+ANSWER_MAX_RETRIES: int = 1  # retry once if first attempt fails
+ASK_QUEUE_TIMEOUT: int = (
+    300  # max seconds for ask task in file queue (not time-critical)
+)
 TASK_POLL_INTERVAL: int = 2  # seconds between checks for agent response
 
 STATUS_FILE: str = os.environ.get(
@@ -536,55 +540,44 @@ def _interruptible_sleep(seconds: int) -> None:
 
 
 def _handle_answer(assigned: dict) -> None:
-    """Answer an assigned question. Write task for agent, wait for response."""
+    """Answer an assigned question via CLI. No file queue — time-critical.
+
+    Strategy: CLI call with fixed timeout, retry once if failed.
+    If both attempts fail, submit "unknown" immediately.
+    A wrong answer (score 3) always beats a timeout (score 0).
+    """
     qid = assigned.get("question_id", "?")
     question_text = assigned.get("question", "")
     log.info('[Q#%s] "%s"', qid, question_text[:60])
 
-    # Calculate timeout from deadline
-    timeout = float(TASK_WAIT_TIMEOUT)
+    # Calculate per-attempt timeout from deadline
+    per_attempt = float(ANSWER_CLI_TIMEOUT)
     reply_ddl = assigned.get("reply_ddl", "")
     if reply_ddl:
         try:
-            deadline = datetime.fromisoformat(reply_ddl.replace("Z", "+00:00"))
-            remaining = (deadline - datetime.now(timezone.utc)).total_seconds() - 15
-            timeout = min(max(remaining, 30), float(TASK_WAIT_TIMEOUT))
+            deadline_dt = datetime.fromisoformat(reply_ddl.replace("Z", "+00:00"))
+            remaining = (deadline_dt - datetime.now(timezone.utc)).total_seconds() - 15
+            # Split remaining time across attempts (with buffer)
+            max_per = remaining / (ANSWER_MAX_RETRIES + 1)
+            per_attempt = min(max(max_per, 20), float(ANSWER_CLI_TIMEOUT))
         except (ValueError, TypeError):
             pass
 
     prompt = build_answer_prompt(assigned)
     response: dict | None = None
 
-    # Try 1: Direct CLI call (fast path)
-    if _cli_available:
-        cli_text = call_agent(prompt, timeout=min(timeout, CLI_TIMEOUT))
+    # Try CLI call, with retries
+    for attempt in range(ANSWER_MAX_RETRIES + 1):
+        cli_text = call_agent(prompt, timeout=per_attempt)
         if cli_text:
             response = parse_json_response(cli_text)
             if response:
-                log.info("[A#%s] got CLI response", qid)
-
-    # Try 2: File queue (fallback when CLI failed or disabled)
-    if response is None:
-        if not _cli_available:
-            log.info("[A#%s] CLI unavailable, using file queue (cron mode)", qid)
+                log.info("[A#%s] got CLI response (attempt %d)", qid, attempt + 1)
+                break
+        if attempt < ANSWER_MAX_RETRIES:
+            log.info("[A#%s] attempt %d failed, retrying...", qid, attempt + 1)
         else:
-            log.info(
-                "[A#%s] CLI returned no valid response, falling back to file queue", qid
-            )
-        task_id = f"answer-{qid}-{int(time.time())}"
-        _write_task(
-            task_id,
-            {
-                "type": "answer",
-                "question_id": qid,
-                "prompt": prompt,
-                "deadline": reply_ddl,
-                "timeout_seconds": int(timeout),
-            },
-        )
-        response = _wait_for_response(task_id, timeout)
-        if response:
-            log.info("[A#%s] got file queue response", qid)
+            log.warning("[A#%s] all %d attempts failed", qid, attempt + 1)
 
     is_fallback = False
     if response and "answer" in response:
@@ -593,9 +586,10 @@ def _handle_answer(assigned: dict) -> None:
     else:
         # Fallback: wrong answer beats timeout
         log.warning(
-            "[A#%s] no agent response (timeout %.0fs), submitting fallback",
+            "[A#%s] no agent response (%d attempts x %.0fs), submitting fallback",
             qid,
-            timeout,
+            ANSWER_MAX_RETRIES + 1,
+            per_attempt,
         )
         valid, answer = True, "unknown"
         is_fallback = True
@@ -690,7 +684,7 @@ def _handle_ask() -> None:
             "type": "ask",
             "bs_id": bs_id,
             "prompt": prompt,
-            "timeout_seconds": TASK_WAIT_TIMEOUT,
+            "timeout_seconds": ASK_QUEUE_TIMEOUT,
         },
     )
 
