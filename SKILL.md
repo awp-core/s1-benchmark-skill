@@ -134,11 +134,11 @@ openclaw cron add \
   --name "benchmark-tasks" \
   --cron "* * * * *" \
   --session isolated \
-  --message "You are the benchmark task processor.
+  --message "You are the benchmark task processor. Run these steps every time:
 
-1. Check /tmp/benchmark-tasks/pending/ for .json files. If none, do nothing and exit.
+1. Check /tmp/benchmark-tasks/pending/ for .json files.
 
-2. For each pending .json file:
+2. If there ARE pending tasks, process each one:
    a) Read it with cat
    b) Read the 'prompt' field and solve the task
    c) For type 'answer': write {\"valid\": true/false, \"answer\": \"...\"} to /tmp/benchmark-tasks/done/<task_id>.json
@@ -146,8 +146,11 @@ openclaw cron add \
    e) Use atomic writes: write to .tmp.json first, then mv to .json
    f) Delete stale pending files older than 5 minutes
 
-3. After processing all tasks, read /tmp/benchmark-worker-status.json and print a brief summary:
-   [Benchmark] Processed N tasks | Worker: running | Answers: X (Y ai / Z fallback) | Questions: W | Errors: E | Uptime: HHh MMm"
+3. ALWAYS read /tmp/benchmark-worker-status.json (even if no tasks were pending) and print a summary.
+   - If tasks were processed: [Benchmark] Processed N tasks | Worker: running | Answers: X (Y ai / Z fallback) | Questions: W | Errors: E | Uptime: HHh MMm
+   - If no tasks pending: [Benchmark] No pending tasks | Worker: running | Answers: X (Y ai / Z fallback) | Questions: W | Errors: E | Uptime: HHh MMm
+   - If worker status file missing: [Benchmark] Worker not running! Consider restarting.
+   - If fallback ratio is high (fallback > ai): [Benchmark] WARNING: High fallback ratio — CLI agent may not be responding. Check openclaw agent status."
 ```
 
 Verify the cron job was created:
