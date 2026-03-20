@@ -100,6 +100,7 @@ fi
 | "question #1234" | any | → `grep '"question_id":1234' $HISTORY_FILE \| jq .` |
 | "scores" / "detailed stats" | any | → `{baseDir}/scripts/benchmark-sign.sh GET /api/v1/my/status` |
 | "change to summary/silent" | any | → Edit config file |
+| "uninstall" / "clean up" | any | → **Stop** + remove agent + delete files |
 | "monitor" | running | → **Continuous Monitoring** |
 
 ## User Commands
@@ -292,6 +293,25 @@ STALE=$(($(date -u +%s) - LAST))
 PID=$(jq -r '.pid' "$STATUS_FILE" 2>/dev/null)
 kill "$PID" 2>/dev/null && echo "Worker stopped" || echo "Not running"
 ```
+
+To also remove the dedicated agent and clean up all instance files:
+
+```bash
+# Read instance info
+AGENT_ID=$(jq -r '.agent // empty' /tmp/benchmark-worker-startup.json 2>/dev/null)
+
+# Remove agent
+if [ -n "$AGENT_ID" ]; then
+  openclaw agents remove "$AGENT_ID" 2>/dev/null && echo "Agent $AGENT_ID removed"
+fi
+
+# Clean up instance files (optional)
+rm -f "$STATUS_FILE" "$CONFIG_FILE" /tmp/benchmark-worker-startup.json
+echo "Cleanup done"
+```
+
+Only clean up the agent when the user explicitly wants to **uninstall**, not on regular stop.
+On regular stop, keep the agent so restart is faster (no need to recreate).
 
 ---
 
