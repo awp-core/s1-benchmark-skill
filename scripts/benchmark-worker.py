@@ -32,6 +32,8 @@ SUSPEND_SLEEP: int = 60  # seconds when suspended
 UNLOCK_INTERVAL: int = 25 * 60  # re-unlock every 25 minutes
 ASK_INTERVAL: int = 60  # seconds between question submissions (API rate limit: 1/min)
 CLI_TIMEOUT: int = 120  # max seconds for a single openclaw agent CLI call
+MAX_RESTARTS: int = 5  # max auto-restarts before giving up
+RESTART_COOLDOWN: int = 10  # seconds between restart attempts
 STATUS_FILE: str = os.environ.get(
     "BENCHMARK_STATUS_FILE", "/tmp/benchmark-worker-status.json"
 )
@@ -1079,4 +1081,25 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    restarts = 0
+    while True:
+        try:
+            main()
+            break  # clean exit (e.g. SIGTERM) — don't restart
+        except SystemExit:
+            break  # sys.exit() from setup failures — don't restart
+        except Exception as exc:
+            restarts += 1
+            log.error("[CRASH] %s: %s", type(exc).__name__, exc)
+            _record_action(f"[CRASH] {type(exc).__name__}: {exc}")
+            _write_status()
+            if restarts > MAX_RESTARTS:
+                log.error("[CRASH] exceeded %d restarts, giving up", MAX_RESTARTS)
+                break
+            log.info(
+                "[RESTART] attempt %d/%d in %ds...",
+                restarts,
+                MAX_RESTARTS,
+                RESTART_COOLDOWN,
+            )
+            time.sleep(RESTART_COOLDOWN)
