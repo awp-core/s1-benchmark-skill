@@ -20,16 +20,18 @@ from datetime import datetime, timezone
 # Configuration (environment variables with defaults)
 # ---------------------------------------------------------------------------
 
-BENCHMARK_API_URL: str = os.environ.get("BENCHMARK_API_URL", "https://tapis1.awp.sh")
+# All configuration is hardcoded or auto-detected. No environment variables needed.
+# The agent just runs: python3 benchmark-worker.py — zero setup required.
+# Runtime changes (notification mode, etc.) go through the config file.
+
+BENCHMARK_API_URL: str = "https://tapis1.awp.sh"
 
 SCRIPT_DIR: str = os.path.dirname(os.path.abspath(__file__))
 SIGN_SCRIPT: str = os.path.join(SCRIPT_DIR, "benchmark-sign.sh")
-BENCHMARK_API_URL = BENCHMARK_API_URL.rstrip("/")
 
-# Instance ID isolates multiple workers on the same machine.
-# Default: derived from wallet address at startup (see main()).
-# All file paths and agent names are suffixed with this ID.
-INSTANCE_ID: str = os.environ.get("BENCHMARK_INSTANCE_ID", "")
+# Instance ID: derived from wallet address at startup (see main()).
+# Isolates file paths and agent names for multi-instance support.
+INSTANCE_ID: str = ""
 
 POLL_SLEEP: int = 5  # seconds between idle polls
 NET_RETRY_SLEEP: int = 10  # seconds after network error
@@ -40,35 +42,28 @@ CLI_TIMEOUT: int = 120  # max seconds for a single openclaw agent CLI call
 MAX_RESTARTS: int = 5  # max auto-restarts before giving up
 RESTART_COOLDOWN: int = 10  # seconds between restart attempts
 
-# File paths — will be updated with instance suffix in main()
+# File paths — set by _init_instance_paths() after wallet detected
 STATUS_FILE: str = ""
 HISTORY_FILE: str = ""
 CONFIG_FILE: str = ""
 LOG_FILE: str = ""
-OPENCLAW_AGENT: str = os.environ.get("OPENCLAW_AGENT", "")
 
 
 def _init_instance_paths() -> None:
     """Initialize all file paths with instance ID suffix for multi-instance isolation."""
     global STATUS_FILE, HISTORY_FILE, CONFIG_FILE, LOG_FILE
     suffix = f"-{INSTANCE_ID}" if INSTANCE_ID else ""
-    STATUS_FILE = os.environ.get(
-        "BENCHMARK_STATUS_FILE", f"/tmp/benchmark-worker{suffix}-status.json"
-    )
-    HISTORY_FILE = os.environ.get(
-        "BENCHMARK_HISTORY_FILE", f"/tmp/benchmark-worker{suffix}-history.jsonl"
-    )
-    CONFIG_FILE = os.environ.get(
-        "BENCHMARK_CONFIG_FILE", f"/tmp/benchmark-worker{suffix}-config.json"
-    )
+    STATUS_FILE = f"/tmp/benchmark-worker{suffix}-status.json"
+    HISTORY_FILE = f"/tmp/benchmark-worker{suffix}-history.jsonl"
+    CONFIG_FILE = f"/tmp/benchmark-worker{suffix}-config.json"
     LOG_FILE = f"/tmp/benchmark-worker{suffix}.log"
 
 
-# Defaults (overridden by config file at runtime)
-_DEFAULT_NOTIFY_CHANNEL: str = os.environ.get("NOTIFY_CHANNEL", "")
-_DEFAULT_NOTIFY_TARGET: str = os.environ.get("NOTIFY_TARGET", "")
-_DEFAULT_NOTIFY_MODE: str = os.environ.get("NOTIFY_MODE", "realtime")
-_DEFAULT_NOTIFY_INTERVAL: int = int(os.environ.get("NOTIFY_INTERVAL", "300"))
+# Notification defaults (overridden by config file at runtime)
+_DEFAULT_NOTIFY_CHANNEL: str = ""
+_DEFAULT_NOTIFY_TARGET: str = ""
+_DEFAULT_NOTIFY_MODE: str = "realtime"
+_DEFAULT_NOTIFY_INTERVAL: int = 300
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -303,12 +298,8 @@ def detect_agent() -> str:
     """Detect or create the dedicated benchmark-worker agent."""
     global _agent_id
 
-    # If explicitly set via env, use that
-    if OPENCLAW_AGENT:
-        _agent_id = OPENCLAW_AGENT
-    else:
-        suffix = f"-{INSTANCE_ID}" if INSTANCE_ID else ""
-        _agent_id = f"benchmark-worker{suffix}"
+    suffix = f"-{INSTANCE_ID}" if INSTANCE_ID else ""
+    _agent_id = f"benchmark-worker{suffix}"
 
     # Check if agent already exists
     if _agent_exists(_agent_id):

@@ -180,26 +180,24 @@ If "not registered":
 
 ### Step 4: Start Worker + Notifications
 
-The worker auto-generates an instance ID from the wallet address (last 6 hex chars).
-All files and agent names are suffixed with this ID, so multiple workers on the same
-machine don't conflict.
-
-Launch the worker and **capture its startup JSON** — it tells you all the paths:
+**Zero env vars needed.** The worker auto-detects everything: wallet, instance ID,
+agent, file paths. Just run it:
 
 ```bash
 python3 {baseDir}/scripts/benchmark-worker.py > /tmp/benchmark-worker-startup.json 2>> /tmp/benchmark-worker-startup.log &
 WORKER_PID=$!
 sleep 3
 
-# Read instance info from startup output
+# Read instance info from startup output (all paths are here)
 STARTUP=$(cat /tmp/benchmark-worker-startup.json)
 INSTANCE_ID=$(echo "$STARTUP" | jq -r '.instance_id')
 AGENT_ID=$(echo "$STARTUP" | jq -r '.agent')
 CONFIG_FILE=$(echo "$STARTUP" | jq -r '.files.config')
 STATUS_FILE=$(echo "$STARTUP" | jq -r '.files.status')
 HISTORY_FILE=$(echo "$STARTUP" | jq -r '.files.history')
+LOG_FILE=$(echo "$STARTUP" | jq -r '.files.log')
 
-# Configure notifications
+# Configure notifications (only thing that needs external info: your chat ID)
 cat > "$CONFIG_FILE" << EOF
 {
   "notify_channel": "<detected_channel>",
@@ -338,18 +336,25 @@ On regular stop, keep the agent so restart is faster (no need to recreate).
 
 ---
 
-## Environment Variables
+## Configuration
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `BENCHMARK_API_URL` | `https://tapis1.awp.sh` | Benchmark subnet API |
-| `BENCHMARK_INSTANCE_ID` | _(wallet last 6 hex)_ | Instance ID for multi-worker isolation |
-| `BENCHMARK_STATUS_FILE` | `/tmp/benchmark-worker-<id>-status.json` | Shared status file |
-| `BENCHMARK_HISTORY_FILE` | `/tmp/benchmark-worker-<id>-history.jsonl` | Full Q&A history |
-| `BENCHMARK_CONFIG_FILE` | `/tmp/benchmark-worker-<id>-config.json` | Runtime config |
-| `OPENCLAW_AGENT` | `benchmark-worker-<id>` | Dedicated agent ID |
-| `NOTIFY_MODE` | `realtime` | `realtime` / `summary` / `silent` |
-| `NOTIFY_INTERVAL` | `300` | Summary interval in seconds |
+**No environment variables needed.** Everything is auto-detected or set via config file.
+
+The worker auto-detects:
+- Wallet address → instance ID (last 6 hex chars)
+- Agent name → `benchmark-worker-<id>` (auto-created if missing)
+- All file paths → `/tmp/benchmark-worker-<id>-*.json`
+- API URL → hardcoded `https://tapis1.awp.sh`
+
+Runtime config via `$CONFIG_FILE` (hot-reload, no restart):
+```json
+{
+  "notify_channel": "telegram",
+  "notify_target": "7926654187",
+  "notify_mode": "realtime",
+  "notify_interval": 300
+}
+```
 
 ## Scoring Reference
 
