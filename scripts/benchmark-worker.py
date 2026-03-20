@@ -317,6 +317,8 @@ def detect_agent() -> str:
                 _agent_id,
                 "--workspace",
                 os.path.expanduser(f"~/.openclaw/workspace-{_agent_id}"),
+                "--model",
+                "anthropic/claude-haiku-4-5",
                 "--non-interactive",
             ],
             capture_output=True,
@@ -393,23 +395,38 @@ def call_agent(prompt: str, timeout: float = CLI_TIMEOUT) -> str | None:
 
     # Poll until process finishes or we get shutdown signal
     deadline = time.monotonic() + timeout + 10
+    aborted = False
     while proc.poll() is None:
         if not running:
             proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
             log.info("[AGENT] CLI aborted due to shutdown")
+            _cleanup_session(session_id)
             return None
         if time.monotonic() > deadline:
             proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
             log.warning("[AGENT] CLI timeout (%ds)", int(timeout))
-            return None
+            aborted = True
+            break
         time.sleep(0.5)
 
     stdout = proc.stdout.read() if proc.stdout else ""
     stderr = proc.stderr.read() if proc.stderr else ""
 
-    # Clean up the session file to prevent context accumulation.
-    # OpenClaw stores sessions at ~/.openclaw/agents/<id>/sessions/<sid>.jsonl
+    # Clean up session file to prevent context accumulation
     _cleanup_session(session_id)
+
+    if aborted:
+        return None
 
     if proc.returncode == 0 and stdout.strip():
         text = stdout.strip()
@@ -996,7 +1013,7 @@ def _format_stats_detail() -> str:
         f"A: {total} ({ai} ai / {fb} fb) | Q: {asked} | E: {errors} | {hours}h{minutes}m"
     )
 
-    # Server-side stats
+    # Server-side stats (skip score distributions if API is down to avoid 90s stall)
     server = _fetch_server_stats()
     if server:
         composite = server.get("composite_score", server.get("compositeScore", ""))
@@ -1009,8 +1026,8 @@ def _format_stats_detail() -> str:
         if parts:
             lines.append(" | ".join(parts))
 
-    # Score distribution — compact one-line format
-    ans_dist = _fetch_score_distribution()
+    # Score distribution — only fetch if server stats succeeded (fast-fail)
+    ans_dist = _fetch_score_distribution() if server else {}
     if ans_dist:
         labels = {5: "correct", 3: "wrong", 2: "misjudged", 0: "timeout"}
         parts = [
@@ -1019,7 +1036,7 @@ def _format_stats_detail() -> str:
         ]
         lines.append(f"Answers: {' / '.join(parts)}")
 
-    q_dist = _fetch_question_score_distribution()
+    q_dist = _fetch_question_score_distribution() if server else {}
     if q_dist:
         labels = {5: "great", 4: "good", 3: "ok", 2: "easy", 0: "invalid"}
         parts = [
