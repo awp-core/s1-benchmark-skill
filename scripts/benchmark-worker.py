@@ -722,26 +722,28 @@ def _format_realtime(action: str, detail: dict | None = None) -> str:
     """Format a realtime notification with 3-section layout."""
     lines: list[str] = []
 
-    # Section 1: Title
-    lines.append("\U0001f419 *Bloop! Fresh catch from Subnet#1*")
+    # Section 1: Title (bold)
+    lines.append("\U0001f419 *Bloop! Fresh catch from Subnet #1*")
     lines.append("")
 
-    # Section 2: Action detail (boxed with decorators)
-    lines.append("\u2500" * 28)
+    # Section 2: Action detail (code block for gray background)
     if detail:
         if detail.get("type") == "answer":
-            src = "\u2705" if not detail.get("fallback") else "\u26a0\ufe0f"
-            lines.append(f"\U0001f4dd Q: {detail.get('question', '')[:55]}")
-            lines.append(f"{src} A: {detail.get('answer', '')[:55]}")
+            src = "ai" if not detail.get("fallback") else "fallback"
+            lines.append("```")
+            lines.append(f"Q: {detail.get('question', '')[:60]}")
+            lines.append(f"A: {detail.get('answer', '')[:60]} ({src})")
+            lines.append("```")
         elif detail.get("type") == "ask":
-            lines.append(f"\U0001f4a1 New question: {detail.get('question', '')[:50]}")
+            lines.append("```")
+            lines.append(f"New question: {detail.get('question', '')[:55]}")
+            lines.append("```")
     else:
-        lines.append(action)
-    lines.append("\u2500" * 28)
+        lines.append(f"```\n{action}\n```")
     lines.append("")
 
-    # Section 3: Stats
-    lines.append(_format_stats_block())
+    # Section 3: Stats (one line + smiley)
+    lines.append(_format_stats_line())
     return "\n".join(lines)
 
 
@@ -749,41 +751,34 @@ def _format_summary() -> str:
     """Format a periodic summary with 3-section layout."""
     lines: list[str] = []
 
-    # Section 1: Title
-    lines.append("\U0001f419 *Bloop! Fresh catch from Subnet#1*")
+    # Section 1: Title (bold)
+    lines.append("\U0001f419 *Bloop! Fresh catch from Subnet #1*")
     lines.append("")
 
-    # Section 2: Recent actions (boxed)
+    # Section 2: Recent actions (code block for gray background)
     prev_answers = _last_notify_snapshot.get("answers", 0)
     prev_asked = _last_notify_snapshot.get("questions_asked", 0)
     delta_a = _stats["answers"] - prev_answers
     delta_q = _stats["questions_asked"] - prev_asked
 
-    lines.append("\u2500" * 28)
-    lines.append(f"\U0001f4ca +{delta_a} answers, +{delta_q} questions")
-    lines.append("")
+    lines.append("```")
+    lines.append(f"+{delta_a} answers, +{delta_q} questions")
     recent = _recent_actions[-10:]
     if recent:
         for entry in recent:
-            act = entry["action"]
-            if "[A#" in act:
-                lines.append(f"  \u2705 {act[:65]}")
-            elif "[ASK]" in act:
-                lines.append(f"  \U0001f4a1 {act[:65]}")
-            else:
-                lines.append(f"  \u2022 {act[:65]}")
+            lines.append(f"  {entry['action'][:65]}")
     else:
-        lines.append("  \U0001f634 No recent activity")
-    lines.append("\u2500" * 28)
+        lines.append("  No recent activity")
+    lines.append("```")
     lines.append("")
 
-    # Section 3: Stats
-    lines.append(_format_stats_block())
+    # Section 3: Stats (one line + smiley)
+    lines.append(_format_stats_line())
     return "\n".join(lines)
 
 
-def _format_stats_block() -> str:
-    """Format the stats section (shared between realtime and summary)."""
+def _format_stats_line() -> str:
+    """Format stats as a single line with smiley at the end."""
     uptime = int(time.monotonic() - _start_time)
     hours, remainder = divmod(uptime, 3600)
     minutes = remainder // 60
@@ -793,14 +788,14 @@ def _format_stats_block() -> str:
     asked = _stats["questions_asked"]
     errors = _stats["errors"]
 
-    lines = [
-        f"\U0001f3af Answers: {total} ({ai}\u2705 / {fb}\u26a0\ufe0f)",
-        f"\U0001f4a1 Questions: {asked} | \u274c Errors: {errors}",
-        f"\u23f1 Uptime: {hours}h {minutes}m",
-    ]
+    line = (
+        f"A: {total} ({ai} ai / {fb} fb) | "
+        f"Q: {asked} | E: {errors} | "
+        f"{hours}h{minutes}m"
+    )
     if total > 0 and fb > ai:
-        lines.append("\u26a0\ufe0f High fallback ratio — check agent status")
-    return "\n".join(lines)
+        return line + " \U0001f635"
+    return line + " \U0001f60a"
 
 
 def run_loop() -> None:
