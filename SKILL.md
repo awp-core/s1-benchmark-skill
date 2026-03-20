@@ -90,7 +90,27 @@ awp-wallet receive 2>/dev/null
   awp-wallet unlock --duration 3600
   ```
 
-### Step 2: Registration Check
+### Step 2: Create Dedicated Agent
+
+Create a separate agent for benchmark work so it doesn't interfere with the user's
+main chat session. Skip if agent already exists.
+
+```bash
+# Check if agent already exists
+openclaw agents list | grep -q benchmark-worker || \
+  openclaw agents add benchmark-worker \
+    --workspace ~/.openclaw/workspace-benchmark \
+    --model anthropic/claude-sonnet-4-6 \
+    --non-interactive
+
+# Verify
+openclaw agents list
+```
+
+This gives the benchmark worker its own workspace and session — the user can keep
+chatting with the main agent without any interference.
+
+### Step 3: Registration Check
 
 ```bash
 chmod +x {baseDir}/scripts/benchmark-sign.sh
@@ -101,13 +121,17 @@ RESULT=$({baseDir}/scripts/benchmark-sign.sh GET /api/v1/poll)
 - **"not registered" in response** → tell user to register via AWP skill, stop.
 - **Any other response** → continue.
 
-### Step 3: Start the Script
+### Step 4: Start the Script
 
 Determine the user's Telegram chat ID from the current session context (e.g., the
-numeric ID from the message that triggered this skill). Then launch with notifications:
+numeric ID from the message that triggered this skill). Then launch with the
+dedicated agent and notifications:
 
 ```bash
 mkdir -p /tmp/benchmark-tasks/pending /tmp/benchmark-tasks/done
+
+# Point worker to dedicated agent (not main session)
+export OPENCLAW_AGENT="benchmark-worker"
 
 # Set notification channel — the worker will send periodic status updates
 export NOTIFY_CHANNEL="telegram"
@@ -119,9 +143,9 @@ WORKER_PID=$!
 sleep 3
 ```
 
-If you cannot determine the chat ID, launch without notifications (status is still
-available via the status file):
+If you cannot determine the chat ID, launch without notifications:
 ```bash
+export OPENCLAW_AGENT="benchmark-worker"
 nohup python3 {baseDir}/scripts/benchmark-worker.py >> /tmp/benchmark-worker.log 2>&1 &
 ```
 
@@ -134,11 +158,12 @@ else
 fi
 ```
 
-### Step 4: Set Up OpenClaw Cron for Task Processing
+### Step 5: Set Up OpenClaw Cron for Task Processing
 
 The worker writes tasks that need LLM reasoning to `/tmp/benchmark-tasks/pending/`.
-Use OpenClaw's **built-in cron system** to process them every minute. This uses the
-Gateway's internal RPC — no HTTP endpoints or CLI workarounds needed.
+Use OpenClaw's **built-in cron system** with the dedicated agent. This uses the
+Gateway's internal RPC — no HTTP endpoints needed, and doesn't interfere with the
+main chat session.
 
 ```bash
 # Remove old cron job if exists
@@ -148,6 +173,9 @@ openclaw cron remove benchmark-tasks 2>/dev/null || true
 openclaw cron add \
   --name "benchmark-tasks" \
   --cron "* * * * *" \
+  --agent benchmark-worker \
+  --session isolated \
+  --timeout-seconds 120 \
   --no-deliver \
   --message "Run {baseDir}/scripts/process-tasks.sh and follow the instructions in {baseDir}/SKILL.md Process Tasks section."
 ```
@@ -171,8 +199,10 @@ Report to user:
 ```
 Worker started (PID XXXX)
   Address: 0x...
+  Agent: benchmark-worker (dedicated, isolated from main chat)
   Task queue: /tmp/benchmark-tasks/
-  Cron: openclaw built-in, every minute
+  Cron: every minute via benchmark-worker agent
+  Notifications: telegram every 5min (if chat ID available)
 ```
 
 ---
@@ -340,7 +370,8 @@ openclaw cron runs benchmark-tasks
 # Common cause: --announce/--deliver causes "Telegram recipient could not be resolved"
 # which marks cron as error and triggers backoff. Fix: recreate with --no-deliver
 openclaw cron remove benchmark-tasks
-openclaw cron add --name "benchmark-tasks" --cron "* * * * *" --no-deliver \
+openclaw cron add --name "benchmark-tasks" --cron "* * * * *" \
+  --agent benchmark-worker --session isolated --timeout-seconds 120 --no-deliver \
   --message "Run {baseDir}/scripts/process-tasks.sh and follow {baseDir}/SKILL.md Process Tasks section."
 ```
 
