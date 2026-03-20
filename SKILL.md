@@ -63,6 +63,7 @@ fi
 | "stop" / "stop working" | running | → **Stop** |
 | "restart" | any | → **Stop** then **Launch** |
 | "logs" | any | → `tail -20 /tmp/benchmark-worker.log` |
+| "show questions" / "full Q&A" | any | → `tail -20 /tmp/benchmark-worker-history.jsonl` |
 | "detailed stats" / "scores" | any | → `{baseDir}/scripts/benchmark-sign.sh GET /api/v1/my/status` |
 | "monitor" | running | → **Continuous Monitoring** |
 
@@ -204,6 +205,27 @@ echo '{"notify_mode": "silent"}' > /tmp/benchmark-worker-config.json
 ```
 
 Changes take effect on the next loop cycle (within seconds). No restart needed.
+
+### Viewing Full Questions & Answers
+
+The worker logs every Q&A to `/tmp/benchmark-worker-history.jsonl` (one JSON per line)
+with full, untruncated content. When the user asks to see questions or answers in detail:
+
+```bash
+# Last 5 entries
+tail -5 /tmp/benchmark-worker-history.jsonl | jq .
+
+# All answers
+grep '"type":"answer"' /tmp/benchmark-worker-history.jsonl | jq .
+
+# All questions asked
+grep '"type":"ask"' /tmp/benchmark-worker-history.jsonl | jq .
+
+# Specific question by ID
+grep '"question_id":1234' /tmp/benchmark-worker-history.jsonl | jq .
+```
+
+Each entry contains full question text, full answer, source (ai/fallback), and timestamp.
 
 ---
 
