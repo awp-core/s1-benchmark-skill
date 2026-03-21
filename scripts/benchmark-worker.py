@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 # The agent just runs: python3 benchmark-worker.py — zero setup required.
 # Runtime changes (notification mode, etc.) go through the config file.
 
-VERSION: str = "3.2.0"
+VERSION: str = "1.2.1"
 BENCHMARK_API_URL: str = "https://tapis1.awp.sh"
 UPDATE_CHECK_URL: str = "https://raw.githubusercontent.com/awp-core/s1-benchmark-skill/main/scripts/benchmark-worker.py"
 UPDATE_CHECK_INTERVAL: int = 3600  # check every hour
