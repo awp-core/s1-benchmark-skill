@@ -1024,20 +1024,21 @@ def _format_summary() -> str:
 
     # Server stats
     server = _fetch_server_stats()
-    scored_a = "?"
-    scored_q = "?"
+    composite = ""
+    reward = ""
     if server:
-        scored_a = server.get("scored_answers", server.get("scoredAnswers", "?"))
-        scored_q = server.get("scored_asks", server.get("scoredAsks", "?"))
         composite = server.get("composite_score", server.get("compositeScore", ""))
         reward = server.get("total_reward", server.get("totalReward", ""))
+
+    # Fetch score distributions first so we can count scored totals
+    ans_dist = _fetch_score_distribution() if server else {}
+    q_dist = _fetch_question_score_distribution() if server else {}
+    scored_a = sum(ans_dist.values()) if ans_dist else "?"
+    scored_q = sum(q_dist.values()) if q_dist else "?"
 
     lines.append(f" Answers   :  {total:>4}  ({scored_a} scored)")
     lines.append(f" Questions :  {asked:>4}  ({scored_q} scored)")
     lines.append(f" Errors    :  {errors:>4}")
-
-    # Answer score distribution
-    ans_dist = _fetch_score_distribution() if server else {}
     if ans_dist:
         lines.append(f" {'-' * w}")
         lines.append(" Answer Scores")
@@ -1052,8 +1053,7 @@ def _format_summary() -> str:
             mark, label = a_info.get(s, ("?", str(s)))
             lines.append(f"  {mark:<2}Score {s}:  {count:>4}  {label}")
 
-    # Question score distribution
-    q_dist = _fetch_question_score_distribution() if server else {}
+    # Question score distribution (already fetched above)
     if q_dist:
         lines.append(f" {'-' * w}")
         lines.append(" Question Scores")
