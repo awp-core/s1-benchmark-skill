@@ -1096,28 +1096,30 @@ def _format_summary() -> str:
     lines.append(f" {'=' * w}")
     lines.append("```")
 
-    # Footer — outside code block, bold with short labels
-    fp: list[str] = [f"**{hours}h{minutes}m**"]
+    # Footer — outside code block, styled as blue link text in Telegram
+    fp: list[str] = [f"{hours}h{minutes}m"]
     online = _fetch_online_agents()
     if online is not None:
-        fp.append(f"**W** {online}")
+        fp.append(f"Online {online}")
     if server and composite:
         try:
-            fp.append(f"**C** {float(composite):.2f}")
+            fp.append(f"Score {float(composite):.2f}")
         except (ValueError, TypeError):
-            fp.append(f"**C** {composite}")
+            fp.append(f"Score {composite}")
     if server and reward:
         try:
             r = float(reward)
             if r >= 1_000_000:
-                fp.append(f"**R** {r / 1_000_000:.1f}M")
+                fp.append(f"Reward {r / 1_000_000:.1f}M")
             elif r >= 1_000:
-                fp.append(f"**R** {r / 1_000:.1f}K")
+                fp.append(f"Reward {r / 1_000:.1f}K")
             else:
-                fp.append(f"**R** {r:.0f}")
+                fp.append(f"Reward {r:.0f}")
         except (ValueError, TypeError):
-            fp.append(f"**R** {reward}")
-    lines.append(" | ".join(fp) + " \U0001f60a")
+            fp.append(f"Reward {reward}")
+    footer_text = " | ".join(fp)
+    # Telegram renders [text](url) as blue clickable text
+    lines.append(f"[{footer_text} \U0001f60a](https://awp.pro)")
 
     return "\n".join(lines)
 
