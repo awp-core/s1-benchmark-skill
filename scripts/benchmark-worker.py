@@ -210,7 +210,7 @@ def get_wallet_address() -> str | None:
             ["awp-wallet", "receive"],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=30,
         )
         match = re.search(r"0x[0-9a-fA-F]{40}", result.stdout)
         return match.group(0) if match else None
@@ -229,7 +229,7 @@ def unlock_wallet() -> bool:
             ["awp-wallet", "unlock", "--duration", "3600"],
             capture_output=True,
             text=True,
-            timeout=15,
+            timeout=30,
             env=sub_env,  # pass current env (includes WALLET_PASSWORD if set)
         )
         if result.returncode != 0:
@@ -379,7 +379,7 @@ def detect_agent() -> str:
             ],
             capture_output=True,
             text=True,
-            timeout=15,
+            timeout=60,
         )
         if result.returncode == 0:
             log.info("[AGENT] created agent: %s", _agent_id)
@@ -400,7 +400,7 @@ def _agent_exists(agent_id: str) -> bool:
             [_openclaw_bin, "agents", "list"],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=60,
         )
         if result.returncode == 0:
             return agent_id in result.stdout
@@ -890,7 +890,7 @@ def _send_message(message: str) -> None:
             ],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=30,
         )
     except (subprocess.TimeoutExpired, FileNotFoundError):
         log.warning("[NOTIFY] failed to send message")
