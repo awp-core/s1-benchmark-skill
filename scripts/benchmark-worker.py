@@ -1119,7 +1119,7 @@ def _format_summary() -> str:
             fp.append(f"Reward {reward}")
     footer_text = " | ".join(fp)
     # Inline URL — Telegram shows as blue text, link preview may appear
-    lines.append(f"[{footer_text} \U0001f60a](https://awp.pro)")
+    lines.append(f"[{footer_text} \U0001f60a](tg://noop)")
 
     return "\n".join(lines)
 
