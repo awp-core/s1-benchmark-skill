@@ -405,6 +405,9 @@ def _purge_agent_sessions() -> None:
     far exceeding the model's context window. Purging at startup ensures
     every CLI call starts fresh.
     """
+    if not _agent_id:
+        log.warning("[AGENT] cannot purge sessions — agent ID not set")
+        return
     session_dir = os.path.expanduser(f"~/.openclaw/agents/{_agent_id}/sessions")
     if not os.path.isdir(session_dir):
         return
@@ -736,7 +739,10 @@ def _handle_answer(assigned: dict) -> None:
         valid, answer = True, "unknown"
         is_fallback = True
         _consecutive_fallbacks += 1
-        if _consecutive_fallbacks == _FALLBACK_ALERT_THRESHOLD:
+        if (
+            _consecutive_fallbacks >= _FALLBACK_ALERT_THRESHOLD
+            and _consecutive_fallbacks % _FALLBACK_ALERT_THRESHOLD == 0
+        ):
             log.warning("[ALERT] %d consecutive fallbacks", _consecutive_fallbacks)
             _send_message(
                 f"\U0001f419 **{_consecutive_fallbacks} consecutive fallbacks!**\n"
@@ -998,6 +1004,7 @@ def _auto_update() -> bool:
         log.info("[UPDATE] git pull success, restarting...")
         _send_message("\U0001f419 **Update complete, restarting...**")
         _write_status()
+        logging.shutdown()
         os.execv(sys.executable, [sys.executable] + sys.argv)
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
         log.warning("[UPDATE] auto-update failed: %s", e)
@@ -1236,7 +1243,11 @@ def _format_summary() -> str:
         except (ValueError, TypeError):
             fp.append(f"Reward {reward}")
     footer_text = " | ".join(fp)
-    emoji = "\U0001f635" if _consecutive_fallbacks >= _FALLBACK_ALERT_THRESHOLD else "\U0001f60a"
+    emoji = (
+        "\U0001f635"
+        if _consecutive_fallbacks >= _FALLBACK_ALERT_THRESHOLD
+        else "\U0001f60a"
+    )
     lines.append(f"{footer_text} {emoji}")
 
     return "\n".join(lines)

@@ -158,14 +158,8 @@ export WALLET_ADDRESS=$(awp-wallet receive 2>/dev/null | grep -oi '0x[0-9a-fA-F]
 
 ### Step 2: Dedicated Agent
 
-```bash
-# Use haiku for lower cost and faster responses (simple Q&A doesn't need sonnet)
-openclaw agents list | grep -q benchmark-worker || \
-  openclaw agents add benchmark-worker \
-    --workspace ~/.openclaw/workspace-benchmark \
-    --model anthropic/claude-haiku-4-5 \
-    --non-interactive
-```
+The worker script automatically creates a dedicated agent (`benchmark-worker-<instance_id>`)
+with the correct name, workspace, and model on first launch. No manual creation needed.
 
 ### Step 3: Registration Check
 
@@ -360,7 +354,7 @@ On regular stop, keep the agent so restart is faster (no need to recreate).
 
 | Problem | Check |
 |---------|-------|
-| High fallback ratio | `openclaw agent --agent benchmark-worker --message "ping"` |
+| High fallback ratio | `openclaw agent --agent $AGENT_ID --message "ping"` |
 | Agent not found | `openclaw agents list` |
 | Worker not starting | `tail -20 /tmp/benchmark-worker-startup.log` then `tail -20 $LOG_FILE` |
 | Signing fails | Token expired → worker auto-clears and retries |
