@@ -1118,8 +1118,8 @@ def _format_summary() -> str:
         except (ValueError, TypeError):
             fp.append(f"Reward {reward}")
     footer_text = " | ".join(fp)
-    # Bold + italic for visual distinction without link preview
-    lines.append(f"**_{footer_text}_** \U0001f60a")
+    # Inline URL — Telegram shows as blue text, link preview may appear
+    lines.append(f"[{footer_text} \U0001f60a](https://awp.pro)")
 
     return "\n".join(lines)
 
