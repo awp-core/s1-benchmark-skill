@@ -948,10 +948,14 @@ def _auto_update() -> None:
             cwd=SCRIPT_DIR,
         )
         if result.returncode != 0:
-            log.warning("[UPDATE] git pull failed: %s", result.stderr.strip()[:200])
+            err = result.stderr.strip()[:100]
+            log.warning("[UPDATE] git pull failed: %s", err)
             _send_message(
-                "\U0001f419 **Update failed**\n"
-                f"git pull error: {result.stderr.strip()[:100]}"
+                f"\U0001f419 **Auto-update failed**\n"
+                f"Error: {err}\n\n"
+                f"Please update manually:\n"
+                f"1. Tell your agent: \"update benchmark worker\"\n"
+                f"2. Or run: cd {SCRIPT_DIR} && git pull && restart worker"
             )
             return
         log.info("[UPDATE] git pull success, restarting...")

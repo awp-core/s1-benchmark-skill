@@ -105,6 +105,7 @@ fi
 | "scores" / "today stats" | any | → `{baseDir}/scripts/benchmark-sign.sh GET /api/v1/workers/<address>/today` |
 | "leaderboard" / "ranking" | any | → `curl -s $BENCHMARK_API_URL/api/v1/leaderboard \| jq .` |
 | "change to summary/silent" | any | → Edit config file |
+| "update" / "update worker" | any | → **Update Worker** |
 | "uninstall" / "clean up" | any | → **Stop** + remove agent + delete files |
 | "monitor" | running | → **Continuous Monitoring** |
 
@@ -294,6 +295,26 @@ STALE=$(($(date -u +%s) - LAST))
 - **< 120s** → healthy
 - **120–600s** → possibly idle
 - **> 600s** → likely stuck, offer restart
+
+---
+
+## Update Worker
+
+When the user asks to update, or when you receive a "Auto-update failed" notification:
+
+```bash
+# 1. Stop the running worker
+PID=$(jq -r '.pid' "$STATUS_FILE" 2>/dev/null)
+kill "$PID" 2>/dev/null
+
+# 2. Pull latest code
+cd {baseDir} && git pull
+
+# 3. Restart the worker (same launch command as Step 4)
+```
+
+The worker also checks for updates automatically every hour and will self-update
+via `git pull` + process restart. This manual path is only needed if auto-update fails.
 
 ---
 
