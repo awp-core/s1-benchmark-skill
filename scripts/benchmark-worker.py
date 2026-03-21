@@ -903,7 +903,7 @@ _update_notified: bool = False  # only notify once per run
 
 
 def _check_for_update() -> None:
-    """Check GitHub for a newer version and notify user if available."""
+    """Check GitHub for a newer version. Auto-update and restart if found."""
     global _update_notified
     if _update_notified:
         return
@@ -919,23 +919,48 @@ def _check_for_update() -> None:
         # Extract VERSION from the remote file
         for line in result.stdout.split("\n"):
             if line.startswith("VERSION"):
-                # Parse: VERSION: str = "x.y.z"
                 remote_ver = line.split('"')[1] if '"' in line else ""
                 if remote_ver and remote_ver != VERSION:
                     _update_notified = True
                     log.info(
-                        "[UPDATE] new version available: %s (current: %s)",
-                        remote_ver,
+                        "[UPDATE] %s -> %s, auto-updating...",
                         VERSION,
+                        remote_ver,
                     )
                     _send_message(
-                        f"\U0001f419 **Update available!**\n"
-                        f"Current: {VERSION} -> New: {remote_ver}\n"
-                        f"Run `git pull` in the skill directory to update."
+                        f"\U0001f419 **Updating {VERSION} \u2192 {remote_ver}**\n"
+                        f"Pulling latest code and restarting..."
                     )
+                    _auto_update()
                 return
     except (subprocess.TimeoutExpired, FileNotFoundError, IndexError):
         pass
+
+
+def _auto_update() -> None:
+    """Pull latest code from git and restart the worker process."""
+    try:
+        result = subprocess.run(
+            ["git", "pull", "--ff-only"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd=SCRIPT_DIR,
+        )
+        if result.returncode != 0:
+            log.warning("[UPDATE] git pull failed: %s", result.stderr.strip()[:200])
+            _send_message(
+                "\U0001f419 **Update failed**\n"
+                f"git pull error: {result.stderr.strip()[:100]}"
+            )
+            return
+        log.info("[UPDATE] git pull success, restarting...")
+        _send_message("\U0001f419 **Update complete, restarting...**")
+        _write_status()
+        # Re-exec the current process with same args to pick up new code
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
+        log.warning("[UPDATE] auto-update failed: %s", e)
 
 
 _last_notify_snapshot: dict[str, int] = {}  # stats snapshot at last summary
