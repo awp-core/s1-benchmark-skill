@@ -297,6 +297,8 @@ def signed_request(method: str, path: str, body: str = "") -> str:
 # ---------------------------------------------------------------------------
 
 _agent_id: str = ""  # detected at startup
+_consecutive_fallbacks: int = 0
+_FALLBACK_ALERT_THRESHOLD: int = 5
 _session_counter: int = 0  # unique session counter
 _rate_limit_until: float = 0  # monotonic time until rate limit backoff ends
 _openclaw_bin: str = "openclaw"  # resolved to absolute path at startup
@@ -721,16 +723,26 @@ def _handle_answer(assigned: dict) -> None:
         if response:
             log.info("[A#%s] got CLI response", qid)
 
+    global _consecutive_fallbacks
     is_fallback = False
     if response and "answer" in response:
         valid = bool(response.get("valid", True))
         answer = str(response["answer"])
+        _consecutive_fallbacks = 0
     else:
         log.warning(
             "[A#%s] no response (%.0fs timeout), submitting fallback", qid, timeout
         )
         valid, answer = True, "unknown"
         is_fallback = True
+        _consecutive_fallbacks += 1
+        if _consecutive_fallbacks == _FALLBACK_ALERT_THRESHOLD:
+            log.warning("[ALERT] %d consecutive fallbacks", _consecutive_fallbacks)
+            _send_message(
+                f"\U0001f419 **{_consecutive_fallbacks} consecutive fallbacks!**\n"
+                f"The agent is not responding. All answers are 'unknown'.\n"
+                f"Check: openclaw agent --agent {_agent_id} --message ping"
+            )
 
     body = json.dumps(
         {
