@@ -1066,7 +1066,8 @@ def _format_summary() -> str:
             label = q_info.get(s, str(s))
             lines.append(f"    Score {s}:  {count:>4}  {label}")
 
-    # Close code block
+    # Close code block with trailing separator
+    lines.append(f" {'=' * w}")
     lines.append("```")
 
     # Footer — outside code block
@@ -1075,10 +1076,22 @@ def _format_summary() -> str:
     if online is not None:
         footer_parts.append(f"Online: {online}")
     if server and composite:
-        footer_parts.append(f"Comp: {composite}")
+        try:
+            footer_parts.append(f"Comp: {float(composite):.2f}")
+        except (ValueError, TypeError):
+            footer_parts.append(f"Comp: {composite}")
     if server and reward:
-        footer_parts.append(f"Reward: {reward}")
-    lines.append(" | ".join(footer_parts))
+        try:
+            r = float(reward)
+            if r >= 1_000_000:
+                footer_parts.append(f"Reward: {r / 1_000_000:.1f}M")
+            elif r >= 1_000:
+                footer_parts.append(f"Reward: {r / 1_000:.1f}K")
+            else:
+                footer_parts.append(f"Reward: {r:.0f}")
+        except (ValueError, TypeError):
+            footer_parts.append(f"Reward: {reward}")
+    lines.append(" | ".join(footer_parts) + " \U0001f60a")
 
     return "\n".join(lines)
 
