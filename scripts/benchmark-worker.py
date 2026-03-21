@@ -1236,8 +1236,8 @@ def _format_summary() -> str:
         except (ValueError, TypeError):
             fp.append(f"Reward {reward}")
     footer_text = " | ".join(fp)
-    # Inline URL — Telegram shows as blue text, link preview may appear
-    lines.append(f"{footer_text} \U0001f60a")
+    emoji = "\U0001f635" if _consecutive_fallbacks >= _FALLBACK_ALERT_THRESHOLD else "\U0001f60a"
+    lines.append(f"{footer_text} {emoji}")
 
     return "\n".join(lines)
 
