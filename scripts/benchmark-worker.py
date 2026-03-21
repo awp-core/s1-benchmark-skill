@@ -1104,9 +1104,19 @@ def _format_summary() -> str:
     lines: list[str] = []
     w = 34  # receipt width
 
-    # Title
-    lines.append(f"\U0001f419 **{_SUMMARY_TITLE}**")
+    # Title — warning icon if agent is not responding
+    if _consecutive_fallbacks >= _FALLBACK_ALERT_THRESHOLD:
+        lines.append(f"\u26a0\ufe0f **{_SUMMARY_TITLE}**")
+    else:
+        lines.append(f"\U0001f419 **{_SUMMARY_TITLE}**")
     lines.append("")
+
+    # Warning banner if agent is not responding
+    if _consecutive_fallbacks >= _FALLBACK_ALERT_THRESHOLD:
+        lines.append(
+            f"!! Agent not responding ({_consecutive_fallbacks} consecutive fallbacks) !!\n"
+            f"Check: openclaw agent --agent {_agent_id} --message ping\n"
+        )
 
     # Receipt code block
     lines.append("```")
