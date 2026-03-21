@@ -14,7 +14,7 @@ description: >
   (staking, governance, registration) — those belong to the AWP skills. It also
   does not apply to generic benchmarking (performance testing), generic server
   monitoring, or exam scoring.
-version: 3.1.0
+version: 3.2.0
 metadata:
   openclaw:
     requires:
