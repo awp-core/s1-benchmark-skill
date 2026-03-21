@@ -36,7 +36,11 @@ fi
 # Auto-detect wallet address if not cached
 if [ -z "${WALLET_ADDRESS:-}" ]; then
   WALLET_ADDRESS=$(awp-wallet receive 2>/dev/null \
-    | grep -oi '0x[0-9a-fA-F]\{40\}' | head -1)
+    | grep -oi '0x[0-9a-fA-F]\{40\}' | head -1 || true)
+  if [ -z "$WALLET_ADDRESS" ]; then
+    echo '{"ok":false,"error":"wallet address not found"}' >&2
+    exit 1
+  fi
   export WALLET_ADDRESS
 fi
 

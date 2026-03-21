@@ -328,16 +328,17 @@ kill "$PID" 2>/dev/null && echo "Worker stopped" || echo "Not running"
 To also remove the dedicated agent and clean up all instance files:
 
 ```bash
-# Read instance info
-AGENT_ID=$(jq -r '.agent // empty' /tmp/benchmark-worker-startup.json 2>/dev/null)
+# Read instance info from the instance-specific startup file
+STARTUP_FILE="/tmp/benchmark-worker-${MY_NAME}-startup.json"
+AGENT_ID=$(jq -r '.agent // empty' "$STARTUP_FILE" 2>/dev/null)
 
 # Remove agent
 if [ -n "$AGENT_ID" ]; then
   openclaw agents remove "$AGENT_ID" 2>/dev/null && echo "Agent $AGENT_ID removed"
 fi
 
-# Clean up instance files (optional)
-rm -f "$STATUS_FILE" "$CONFIG_FILE" /tmp/benchmark-worker-startup.json
+# Clean up all instance files
+rm -f "$STATUS_FILE" "$CONFIG_FILE" "$STARTUP_FILE" "$HISTORY_FILE" "$LOG_FILE"
 echo "Cleanup done"
 ```
 

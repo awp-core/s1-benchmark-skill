@@ -453,7 +453,7 @@ def call_agent(prompt: str, timeout: float = CLI_TIMEOUT) -> str | None:
         return None
 
     # Poll until process finishes or we get shutdown signal
-    deadline = time.monotonic() + timeout + 10
+    deadline = time.monotonic() + timeout
     aborted = False
     while proc.poll() is None:
         if not running:
@@ -921,7 +921,6 @@ def _check_for_update() -> None:
             if line.startswith("VERSION"):
                 remote_ver = line.split('"')[1] if '"' in line else ""
                 if remote_ver and remote_ver != VERSION:
-                    _update_notified = True
                     log.info(
                         "[UPDATE] %s -> %s, auto-updating...",
                         VERSION,
@@ -931,14 +930,17 @@ def _check_for_update() -> None:
                         f"\U0001f419 **Updating {VERSION} \u2192 {remote_ver}**\n"
                         f"Pulling latest code and restarting..."
                     )
-                    _auto_update()
+                    if _auto_update():
+                        return  # execv succeeded, won't reach here
+                    # Update failed — don't retry until next check interval
+                    # but DO allow retry on next cycle (don't set _update_notified)
                 return
     except (subprocess.TimeoutExpired, FileNotFoundError, IndexError):
         pass
 
 
-def _auto_update() -> None:
-    """Pull latest code from git and restart the worker process."""
+def _auto_update() -> bool:
+    """Pull latest code from git and restart the worker process. Returns True only on execv."""
     try:
         result = subprocess.run(
             ["git", "pull", "--ff-only"],
@@ -954,17 +956,17 @@ def _auto_update() -> None:
                 f"\U0001f419 **Auto-update failed**\n"
                 f"Error: {err}\n\n"
                 f"Please update manually:\n"
-                f"1. Tell your agent: \"update benchmark worker\"\n"
+                f'1. Tell your agent: "update benchmark worker"\n'
                 f"2. Or run: cd {SCRIPT_DIR} && git pull && restart worker"
             )
-            return
+            return False
         log.info("[UPDATE] git pull success, restarting...")
         _send_message("\U0001f419 **Update complete, restarting...**")
         _write_status()
-        # Re-exec the current process with same args to pick up new code
         os.execv(sys.executable, [sys.executable] + sys.argv)
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
         log.warning("[UPDATE] auto-update failed: %s", e)
+    return False
 
 
 _last_notify_snapshot: dict[str, int] = {}  # stats snapshot at last summary
@@ -1085,7 +1087,7 @@ def _format_summary() -> str:
 
     shown = _recent_actions[-3:]
     total_delta = delta_a + delta_q
-    skipped = total_delta - len(shown)
+    skipped = max(0, total_delta - len(shown))
 
     if shown:
         for entry in shown:
