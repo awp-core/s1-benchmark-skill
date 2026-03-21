@@ -1096,28 +1096,28 @@ def _format_summary() -> str:
     lines.append(f" {'=' * w}")
     lines.append("```")
 
-    # Footer — outside code block
-    footer_parts = [f"{hours}h{minutes}m"]
+    # Footer — outside code block, bold with short labels
+    fp: list[str] = [f"**{hours}h{minutes}m**"]
     online = _fetch_online_agents()
     if online is not None:
-        footer_parts.append(f"Online: {online}")
+        fp.append(f"**W** {online}")
     if server and composite:
         try:
-            footer_parts.append(f"Comp: {float(composite):.2f}")
+            fp.append(f"**C** {float(composite):.2f}")
         except (ValueError, TypeError):
-            footer_parts.append(f"Comp: {composite}")
+            fp.append(f"**C** {composite}")
     if server and reward:
         try:
             r = float(reward)
             if r >= 1_000_000:
-                footer_parts.append(f"Reward: {r / 1_000_000:.1f}M")
+                fp.append(f"**R** {r / 1_000_000:.1f}M")
             elif r >= 1_000:
-                footer_parts.append(f"Reward: {r / 1_000:.1f}K")
+                fp.append(f"**R** {r / 1_000:.1f}K")
             else:
-                footer_parts.append(f"Reward: {r:.0f}")
+                fp.append(f"**R** {r:.0f}")
         except (ValueError, TypeError):
-            footer_parts.append(f"Reward: {reward}")
-    lines.append(" | ".join(footer_parts) + " \U0001f60a")
+            fp.append(f"**R** {reward}")
+    lines.append(" | ".join(fp) + " \U0001f60a")
 
     return "\n".join(lines)
 
