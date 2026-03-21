@@ -396,6 +396,29 @@ def detect_agent() -> str:
     return _agent_id
 
 
+def _purge_agent_sessions() -> None:
+    """Delete all session files for the agent to prevent context overflow.
+
+    OpenClaw sessions are append-only and can grow to 900k+ tokens,
+    far exceeding the model's context window. Purging at startup ensures
+    every CLI call starts fresh.
+    """
+    session_dir = os.path.expanduser(f"~/.openclaw/agents/{_agent_id}/sessions")
+    if not os.path.isdir(session_dir):
+        return
+    count = 0
+    for f in os.listdir(session_dir):
+        fpath = os.path.join(session_dir, f)
+        try:
+            if os.path.isfile(fpath):
+                os.unlink(fpath)
+                count += 1
+        except OSError:
+            pass
+    if count > 0:
+        log.info("[AGENT] purged %d session files from %s", count, session_dir)
+
+
 def _agent_exists(agent_id: str) -> bool:
     """Check if an OpenClaw agent exists."""
     try:
@@ -1442,9 +1465,10 @@ def main() -> None:
     short_addr = f"{address[:6]}...{address[-4:]}"
     log.info("[SETUP] wallet %s | api connected | ready", short_addr)
 
-    # 4. Resolve openclaw binary path + detect agent
+    # 4. Resolve openclaw binary path + detect agent + purge old sessions
     _resolve_openclaw_path()
     agent_id = detect_agent()
+    _purge_agent_sessions()
     log.info("[SETUP] agent: %s", agent_id)
 
     startup_info = {
