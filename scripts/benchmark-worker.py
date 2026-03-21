@@ -10,6 +10,7 @@ import logging
 import os
 import random
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -292,6 +293,35 @@ def signed_request(method: str, path: str, body: str = "") -> str:
 _agent_id: str = ""  # detected at startup
 _session_counter: int = 0  # unique session counter
 _rate_limit_until: float = 0  # monotonic time until rate limit backoff ends
+_openclaw_bin: str = "openclaw"  # resolved to absolute path at startup
+
+
+def _resolve_openclaw_path() -> str:
+    """Find the absolute path to the openclaw binary.
+
+    nohup/background processes may not inherit the full PATH, so we
+    resolve it once at startup and use the absolute path everywhere.
+    """
+    global _openclaw_bin
+
+    path = shutil.which("openclaw")
+    if path:
+        _openclaw_bin = path
+        log.info("[SETUP] openclaw found: %s", path)
+    else:
+        # Try common locations
+        for candidate in [
+            os.path.expanduser("~/.local/bin/openclaw"),
+            "/usr/local/bin/openclaw",
+            os.path.expanduser("~/.openclaw/bin/openclaw"),
+            os.path.expanduser("~/bin/openclaw"),
+        ]:
+            if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                _openclaw_bin = candidate
+                log.info("[SETUP] openclaw found at fallback: %s", candidate)
+                return _openclaw_bin
+        log.warning("[SETUP] openclaw not found in PATH or common locations")
+    return _openclaw_bin
 
 
 def detect_agent() -> str:
@@ -311,7 +341,7 @@ def detect_agent() -> str:
     try:
         result = subprocess.run(
             [
-                "openclaw",
+                _openclaw_bin,
                 "agents",
                 "add",
                 _agent_id,
@@ -341,7 +371,7 @@ def _agent_exists(agent_id: str) -> bool:
     """Check if an OpenClaw agent exists."""
     try:
         result = subprocess.run(
-            ["openclaw", "agents", "list"],
+            [_openclaw_bin, "agents", "list"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -376,7 +406,7 @@ def call_agent(prompt: str, timeout: float = CLI_TIMEOUT) -> str | None:
         session_id = f"bw-{INSTANCE_ID}-{int(time.time())}-{_session_counter}"
         proc = subprocess.Popen(
             [
-                "openclaw",
+                _openclaw_bin,
                 "agent",
                 "--agent",
                 _agent_id,
@@ -822,7 +852,7 @@ def _send_message(message: str) -> None:
     try:
         subprocess.run(
             [
-                "openclaw",
+                _openclaw_bin,
                 "message",
                 "send",
                 "--channel",
@@ -1264,7 +1294,8 @@ def main() -> None:
     short_addr = f"{address[:6]}...{address[-4:]}"
     log.info("[SETUP] wallet %s | api connected | ready", short_addr)
 
-    # 4. Detect OpenClaw agent
+    # 4. Resolve openclaw binary path + detect agent
+    _resolve_openclaw_path()
     agent_id = detect_agent()
     log.info("[SETUP] agent: %s", agent_id)
 
