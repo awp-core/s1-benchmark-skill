@@ -5,6 +5,7 @@ Delegates signing to benchmark-sign.sh.
 When LLM reasoning is needed, calls openclaw agent CLI directly.
 """
 
+import argparse
 import json
 import logging
 import os
@@ -48,16 +49,18 @@ STATUS_FILE: str = ""
 HISTORY_FILE: str = ""
 CONFIG_FILE: str = ""
 LOG_FILE: str = ""
+STARTUP_FILE: str = ""
 
 
 def _init_instance_paths() -> None:
     """Initialize all file paths with instance ID suffix for multi-instance isolation."""
-    global STATUS_FILE, HISTORY_FILE, CONFIG_FILE, LOG_FILE
+    global STATUS_FILE, HISTORY_FILE, CONFIG_FILE, LOG_FILE, STARTUP_FILE
     suffix = f"-{INSTANCE_ID}" if INSTANCE_ID else ""
     STATUS_FILE = f"/tmp/benchmark-worker{suffix}-status.json"
     HISTORY_FILE = f"/tmp/benchmark-worker{suffix}-history.jsonl"
     CONFIG_FILE = f"/tmp/benchmark-worker{suffix}-config.json"
     LOG_FILE = f"/tmp/benchmark-worker{suffix}.log"
+    STARTUP_FILE = f"/tmp/benchmark-worker{suffix}-startup.json"
 
 
 # Notification defaults (overridden by config file at runtime)
@@ -1252,9 +1255,24 @@ def run_loop() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _parse_args() -> argparse.Namespace:
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(description="Benchmark Subnet worker")
+    parser.add_argument(
+        "--agent-name",
+        default="",
+        help="Unique name for this worker instance. Used to isolate files "
+        "and agent names when multiple workers run on the same machine. "
+        "Defaults to wallet address last 6 hex chars.",
+    )
+    return parser.parse_args()
+
+
 def main() -> None:
     """Entry point: setup then main loop."""
     global INSTANCE_ID
+
+    args = _parse_args()
 
     # 1. Check wallet
     address = get_wallet_address()
@@ -1270,8 +1288,10 @@ def main() -> None:
         )
         sys.exit(1)
 
-    # Auto-generate instance ID from wallet address (last 6 hex chars)
-    if not INSTANCE_ID:
+    # Instance ID: --agent-name takes priority, then wallet address
+    if args.agent_name:
+        INSTANCE_ID = args.agent_name
+    elif not INSTANCE_ID:
         INSTANCE_ID = address[-6:].lower()
 
     # Initialize all instance-specific paths
@@ -1323,23 +1343,27 @@ def main() -> None:
     agent_id = detect_agent()
     log.info("[SETUP] agent: %s", agent_id)
 
-    print(
-        json.dumps(
-            {
-                "ok": True,
-                "message": "worker started",
-                "address": address,
-                "instance_id": INSTANCE_ID,
-                "agent": agent_id,
-                "files": {
-                    "status": STATUS_FILE,
-                    "history": HISTORY_FILE,
-                    "config": CONFIG_FILE,
-                    "log": LOG_FILE,
-                },
-            }
-        )
-    )
+    startup_info = {
+        "ok": True,
+        "message": "worker started",
+        "address": address,
+        "instance_id": INSTANCE_ID,
+        "agent": agent_id,
+        "files": {
+            "status": STATUS_FILE,
+            "history": HISTORY_FILE,
+            "config": CONFIG_FILE,
+            "log": LOG_FILE,
+            "startup": STARTUP_FILE,
+        },
+    }
+    # Write to stdout (for agent to capture) and to instance-specific file
+    print(json.dumps(startup_info))
+    try:
+        with open(STARTUP_FILE, "w") as f:
+            json.dump(startup_info, f, indent=2)
+    except OSError:
+        pass
 
     # 5. Write initial config file (if not exists) so user/agent can edit it
     if not os.path.exists(CONFIG_FILE):
