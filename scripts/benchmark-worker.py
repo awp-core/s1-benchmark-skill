@@ -304,26 +304,49 @@ def _resolve_openclaw_path() -> str:
 
     nohup/background processes may not inherit the full PATH, so we
     resolve it once at startup and use the absolute path everywhere.
+    Also searches for openclaw.mjs (Node.js entry point) as some
+    installations use that instead of a plain 'openclaw' binary.
     """
     global _openclaw_bin
 
-    path = shutil.which("openclaw")
-    if path:
-        _openclaw_bin = path
-        log.info("[SETUP] openclaw found: %s", path)
-    else:
-        # Try common locations
-        for candidate in [
-            os.path.expanduser("~/.local/bin/openclaw"),
-            "/usr/local/bin/openclaw",
-            os.path.expanduser("~/.openclaw/bin/openclaw"),
-            os.path.expanduser("~/bin/openclaw"),
-        ]:
+    # Try which() for both names
+    for name in ["openclaw", "openclaw.mjs"]:
+        path = shutil.which(name)
+        if path:
+            _openclaw_bin = path
+            log.info("[SETUP] openclaw found: %s", path)
+            return _openclaw_bin
+
+    # Try common locations with both names
+    search_dirs = [
+        os.path.expanduser("~/.local/bin"),
+        "/usr/local/bin",
+        os.path.expanduser("~/.openclaw/bin"),
+        os.path.expanduser("~/bin"),
+        os.path.expanduser("~/.openclaw"),
+        "/usr/bin",
+    ]
+    for d in search_dirs:
+        for name in ["openclaw", "openclaw.mjs"]:
+            candidate = os.path.join(d, name)
             if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
                 _openclaw_bin = candidate
                 log.info("[SETUP] openclaw found at fallback: %s", candidate)
                 return _openclaw_bin
-        log.warning("[SETUP] openclaw not found in PATH or common locations")
+
+    # Last resort: check node_modules and npm global
+    for candidate in [
+        os.path.expanduser("~/.openclaw/openclaw.mjs"),
+        os.path.expanduser("~/.openclaw/node_modules/.bin/openclaw"),
+        os.path.expanduser("~/.npm-global/bin/openclaw"),
+        "/usr/lib/node_modules/openclaw/openclaw.mjs",
+    ]:
+        if os.path.isfile(candidate):
+            _openclaw_bin = candidate
+            log.info("[SETUP] openclaw found at: %s", candidate)
+            return _openclaw_bin
+
+    log.warning("[SETUP] openclaw not found in PATH or common locations")
     return _openclaw_bin
 
 
