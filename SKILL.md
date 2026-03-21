@@ -9,7 +9,7 @@ description: >
   viewing answered/asked questions, managing notification settings, updating the
   worker, or troubleshooting fallback issues. Not for AWP wallet transfers, RootNet
   staking/governance, generic performance benchmarking, or server monitoring.
-version: 1.2.2
+version: 1.2.3
 metadata:
   openclaw:
     requires:
