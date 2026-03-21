@@ -599,8 +599,8 @@ def build_question_prompt(bench_set: dict) -> str:
     parts.append("")
     parts.append("## Benchmark Set")
     set_id = (
-        bench_set.get("bs_id")
-        or bench_set.get("set_id")
+        bench_set.get("set_id")
+        or bench_set.get("bs_id")
         or bench_set.get("id")
         or "N/A"
     )
@@ -751,7 +751,7 @@ def _handle_ask() -> None:
 
     chosen = random.choice(sets)
     # API may return "bs_id", "set_id", or "id" depending on version
-    bs_id = chosen.get("bs_id") or chosen.get("set_id") or chosen.get("id") or "unknown"
+    bs_id = chosen.get("set_id") or chosen.get("bs_id") or chosen.get("id") or "unknown"
     if bs_id == "unknown":
         log.warning("[ASK] benchmark set has no bs_id: %s", json.dumps(chosen)[:200])
         return
@@ -916,13 +916,10 @@ _SUMMARY_TITLE: str = "\u2193 Ahem! Debrief from Subnet #1"
 
 
 def _fetch_online_agents() -> int | None:
-    """Fetch the number of online agents from the stats API."""
+    """Fetch the number of online agents from GET /api/v1/stats."""
     try:
         raw = signed_request("GET", "/api/v1/stats")
-        data = json.loads(raw).get("data", {})
-        return data.get(
-            "worker_count", data.get("workerCount", data.get("online_workers"))
-        )
+        return json.loads(raw).get("data", {}).get("worker_count")
     except (json.JSONDecodeError, AttributeError):
         return None
 
@@ -1027,8 +1024,8 @@ def _format_summary() -> str:
     composite = ""
     reward = ""
     if server:
-        composite = server.get("composite_score", server.get("compositeScore", ""))
-        reward = server.get("total_reward", server.get("totalReward", ""))
+        composite = server.get("composite_score", "")
+        reward = server.get("estimated_reward", server.get("total_reward", ""))
 
     # Fetch score distributions first so we can count scored totals
     ans_dist = _fetch_score_distribution() if server else {}
@@ -1087,7 +1084,21 @@ def _format_summary() -> str:
 
 
 def _fetch_server_stats() -> dict | None:
-    """Fetch scoring/reward stats from the benchmark API."""
+    """Fetch today's performance stats from the benchmark API.
+
+    Uses /api/v1/workers/{address}/today which has richer data than /my/status:
+    composite_score, estimated_reward, avg scores, etc.
+    Falls back to /api/v1/my/status if today endpoint fails.
+    """
+    if _worker_address:
+        try:
+            raw = signed_request("GET", f"/api/v1/workers/{_worker_address}/today")
+            data = json.loads(raw).get("data", {})
+            if data:
+                return data
+        except (json.JSONDecodeError, AttributeError):
+            pass
+    # Fallback
     try:
         raw = signed_request("GET", "/api/v1/my/status")
         return json.loads(raw).get("data", {})

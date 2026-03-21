@@ -98,7 +98,8 @@ fi
 | "logs" | any | → `tail -20 $LOG_FILE` (path from startup JSON) |
 | "show questions" / "full Q&A" | any | → `tail -20 $HISTORY_FILE \| jq .` |
 | "question #1234" | any | → `grep '"question_id":1234' $HISTORY_FILE \| jq .` |
-| "scores" / "detailed stats" | any | → `{baseDir}/scripts/benchmark-sign.sh GET /api/v1/my/status` |
+| "scores" / "today stats" | any | → `{baseDir}/scripts/benchmark-sign.sh GET /api/v1/workers/<address>/today` |
+| "leaderboard" / "ranking" | any | → `curl -s $BENCHMARK_API_URL/api/v1/leaderboard \| jq .` |
 | "change to summary/silent" | any | → Edit config file |
 | "uninstall" / "clean up" | any | → **Stop** + remove agent + delete files |
 | "monitor" | running | → **Continuous Monitoring** |
