@@ -12,7 +12,7 @@ description: >
   This is NOT the AWP wallet skill (token transfers) or RootNet skill (staking,
   governance). Does not apply to generic performance benchmarking or server
   monitoring.
-version: 1.2.1
+version: 1.2.2
 metadata:
   openclaw:
     requires:
