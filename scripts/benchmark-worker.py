@@ -26,7 +26,10 @@ from datetime import datetime, timezone
 # The agent just runs: python3 benchmark-worker.py — zero setup required.
 # Runtime changes (notification mode, etc.) go through the config file.
 
+VERSION: str = "3.1.0"
 BENCHMARK_API_URL: str = "https://tapis1.awp.sh"
+UPDATE_CHECK_URL: str = "https://raw.githubusercontent.com/awp-core/s1-benchmark-skill/main/scripts/benchmark-worker.py"
+UPDATE_CHECK_INTERVAL: int = 3600  # check every hour
 
 SCRIPT_DIR: str = os.path.dirname(os.path.abspath(__file__))
 SIGN_SCRIPT: str = os.path.join(SCRIPT_DIR, "benchmark-sign.sh")
@@ -896,6 +899,45 @@ def _send_message(message: str) -> None:
         log.warning("[NOTIFY] failed to send message")
 
 
+_update_notified: bool = False  # only notify once per run
+
+
+def _check_for_update() -> None:
+    """Check GitHub for a newer version and notify user if available."""
+    global _update_notified
+    if _update_notified:
+        return
+    try:
+        result = subprocess.run(
+            ["curl", "-sf", "--max-time", "10", UPDATE_CHECK_URL],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if result.returncode != 0 or not result.stdout:
+            return
+        # Extract VERSION from the remote file
+        for line in result.stdout.split("\n"):
+            if line.startswith("VERSION"):
+                # Parse: VERSION: str = "x.y.z"
+                remote_ver = line.split('"')[1] if '"' in line else ""
+                if remote_ver and remote_ver != VERSION:
+                    _update_notified = True
+                    log.info(
+                        "[UPDATE] new version available: %s (current: %s)",
+                        remote_ver,
+                        VERSION,
+                    )
+                    _send_message(
+                        f"\U0001f419 **Update available!**\n"
+                        f"Current: {VERSION} -> New: {remote_ver}\n"
+                        f"Run `git pull` in the skill directory to update."
+                    )
+                return
+    except (subprocess.TimeoutExpired, FileNotFoundError, IndexError):
+        pass
+
+
 _last_notify_snapshot: dict[str, int] = {}  # stats snapshot at last summary
 
 
@@ -1205,8 +1247,14 @@ def run_loop() -> None:
     last_unlock = time.monotonic()
     last_ask = 0.0  # trigger ask on first opportunity
     last_notify = time.monotonic()
+    last_update_check = 0.0  # check on first loop
 
     while running:
+        # -- Periodic update check -------------------------------------------
+        if time.monotonic() - last_update_check >= UPDATE_CHECK_INTERVAL:
+            _check_for_update()
+            last_update_check = time.monotonic()
+
         # -- Periodic summary notification ------------------------------------
         cfg = _read_config()
         interval = int(cfg.get("notify_interval", _DEFAULT_NOTIFY_INTERVAL))
