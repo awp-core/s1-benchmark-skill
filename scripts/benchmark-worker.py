@@ -1066,8 +1066,10 @@ def _format_summary() -> str:
             label = q_info.get(s, str(s))
             lines.append(f"    Score {s}:  {count:>4}  {label}")
 
-    # Footer
-    lines.append(f" {'=' * w}")
+    # Close code block
+    lines.append("```")
+
+    # Footer — outside code block
     footer_parts = [f"{hours}h{minutes}m"]
     online = _fetch_online_agents()
     if online is not None:
@@ -1076,9 +1078,7 @@ def _format_summary() -> str:
         footer_parts.append(f"Comp: {composite}")
     if server and reward:
         footer_parts.append(f"Reward: {reward}")
-    lines.append(f" {' | '.join(footer_parts)}")
-
-    lines.append("```")
+    lines.append(" | ".join(footer_parts))
 
     return "\n".join(lines)
 
