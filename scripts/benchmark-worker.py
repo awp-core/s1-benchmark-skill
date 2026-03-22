@@ -299,7 +299,6 @@ def signed_request(method: str, path: str, body: str = "") -> str:
 _agent_id: str = ""  # detected at startup
 _consecutive_fallbacks: int = 0
 _FALLBACK_ALERT_THRESHOLD: int = 5
-_session_counter: int = 0  # unique session counter
 _rate_limit_until: float = 0  # monotonic time until rate limit backoff ends
 _openclaw_bin: str = "openclaw"  # resolved to absolute path at startup
 
@@ -468,20 +467,16 @@ def call_agent(prompt: str, timeout: float = CLI_TIMEOUT) -> str | None:
 
     try:
         # Purge ALL session files BEFORE each call to guarantee a clean slate.
-        # OpenClaw sessions are append-only and file naming is unpredictable.
+        # No --session-id: it conflicts with --agent and routes to main agent.
+        # Session isolation is handled by purging files instead.
         _purge_agent_sessions()
 
-        global _session_counter
-        _session_counter += 1
-        session_id = f"bw-{INSTANCE_ID}-{int(time.time())}-{_session_counter}"
         proc = subprocess.Popen(
             [
                 _openclaw_bin,
                 "agent",
                 "--agent",
                 _agent_id,
-                "--session-id",
-                session_id,
                 "--message",
                 prompt,
             ],
@@ -505,7 +500,7 @@ def call_agent(prompt: str, timeout: float = CLI_TIMEOUT) -> str | None:
                 proc.kill()
                 proc.wait()
             log.info("[AGENT] CLI aborted due to shutdown")
-            _cleanup_session(session_id)
+            _purge_agent_sessions()
             return None
         if time.monotonic() > deadline:
             proc.terminate()
@@ -523,7 +518,7 @@ def call_agent(prompt: str, timeout: float = CLI_TIMEOUT) -> str | None:
     stderr = proc.stderr.read() if proc.stderr else ""
 
     # Clean up session file to prevent context accumulation
-    _cleanup_session(session_id)
+    _purge_agent_sessions()
 
     if aborted:
         return None
@@ -553,16 +548,6 @@ def call_agent(prompt: str, timeout: float = CLI_TIMEOUT) -> str | None:
 
     log.warning("[AGENT] CLI failed (exit %d)", proc.returncode)
     return None
-
-
-def _cleanup_session(_session_id: str = "") -> None:
-    """Delete ALL session files for this agent to prevent context accumulation.
-
-    OpenClaw sessions are append-only and file naming is unpredictable
-    (may not match session_id). Safest approach: wipe the entire sessions
-    directory after every CLI call.
-    """
-    _purge_agent_sessions()
 
 
 def _extract_text_from_agent_response(data: dict) -> str | None:
