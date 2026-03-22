@@ -1169,24 +1169,29 @@ def _format_summary() -> str:
         composite = server.get("composite_score", "")
         reward = server.get("estimated_reward", server.get("total_reward", ""))
 
-    # Fetch score distributions for the score table
-    ans_dist = _fetch_score_distribution() if server else {}
-    q_dist = _fetch_question_score_distribution() if server else {}
+    # Fetch all-time totals from /my/status (not /today which is day-scoped)
+    alltime = None
+    try:
+        raw = signed_request("GET", "/api/v1/my/status")
+        alltime = json.loads(raw).get("data", {})
+    except (json.JSONDecodeError, AttributeError):
+        pass
+
+    # Score distributions (all-time from /my/assignments and /my/questions)
+    ans_dist = _fetch_score_distribution() if (server or alltime) else {}
+    q_dist = _fetch_question_score_distribution() if (server or alltime) else {}
     scored_a = sum(ans_dist.values()) if ans_dist else 0
     scored_q = sum(q_dist.values()) if q_dist else 0
 
-    # Use server totals if available (covers full history, not just this run)
+    # All-time totals from /my/status — same scope as score distributions
     total_a = total
     total_q = asked
-    if server:
-        total_a = max(
-            total,
-            server.get("questions_answered", server.get("total_assignments", total)),
-        )
-        total_q = max(
-            asked,
-            server.get("questions_asked", server.get("total_questions", asked)),
-        )
+    if alltime:
+        total_a = alltime.get("total_assignments", total)
+        total_q = alltime.get("total_questions", asked)
+    # Ensure total >= scored (both should be all-time)
+    total_a = max(total_a, scored_a)
+    total_q = max(total_q, scored_q)
 
     lines.append(f" Answers   : {total_a:>5}  ({scored_a} scored)")
     lines.append(f" Questions : {total_q:>5}  ({scored_q} scored)")
