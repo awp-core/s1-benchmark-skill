@@ -455,9 +455,10 @@ def call_agent(prompt: str, timeout: float = CLI_TIMEOUT) -> str | None:
         return None
 
     try:
-        # Each call MUST use a unique session ID. Reusing a session-id
-        # appends to the existing context (OpenClaw sessions are append-only).
-        # This would hit Anthropic's long-context rate limit after ~50 calls.
+        # Purge ALL session files BEFORE each call to guarantee a clean slate.
+        # OpenClaw sessions are append-only and file naming is unpredictable.
+        _purge_agent_sessions()
+
         global _session_counter
         _session_counter += 1
         session_id = f"bw-{INSTANCE_ID}-{int(time.time())}-{_session_counter}"
@@ -542,20 +543,14 @@ def call_agent(prompt: str, timeout: float = CLI_TIMEOUT) -> str | None:
     return None
 
 
-def _cleanup_session(session_id: str) -> None:
-    """Delete the session transcript file to prevent context accumulation.
+def _cleanup_session(_session_id: str = "") -> None:
+    """Delete ALL session files for this agent to prevent context accumulation.
 
-    OpenClaw sessions are append-only. Without cleanup, each session's
-    JSONL file grows indefinitely and eventually triggers Anthropic's
-    long-context rate limit.
+    OpenClaw sessions are append-only and file naming is unpredictable
+    (may not match session_id). Safest approach: wipe the entire sessions
+    directory after every CLI call.
     """
-    session_dir = os.path.expanduser(f"~/.openclaw/agents/{_agent_id}/sessions")
-    transcript = os.path.join(session_dir, f"{session_id}.jsonl")
-    try:
-        if os.path.exists(transcript):
-            os.unlink(transcript)
-    except OSError:
-        pass
+    _purge_agent_sessions()
 
 
 def _extract_text_from_agent_response(data: dict) -> str | None:
