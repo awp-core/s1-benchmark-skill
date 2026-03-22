@@ -1170,14 +1170,27 @@ def _format_summary() -> str:
         composite = server.get("composite_score", "")
         reward = server.get("estimated_reward", server.get("total_reward", ""))
 
-    # Fetch score distributions first so we can count scored totals
+    # Fetch score distributions for the score table
     ans_dist = _fetch_score_distribution() if server else {}
     q_dist = _fetch_question_score_distribution() if server else {}
-    scored_a = sum(ans_dist.values()) if ans_dist else "?"
-    scored_q = sum(q_dist.values()) if q_dist else "?"
+    scored_a = sum(ans_dist.values()) if ans_dist else 0
+    scored_q = sum(q_dist.values()) if q_dist else 0
 
-    lines.append(f" Answers   :  {total:>4}  ({scored_a} scored)")
-    lines.append(f" Questions :  {asked:>4}  ({scored_q} scored)")
+    # Use server totals if available (covers full history, not just this run)
+    total_a = total
+    total_q = asked
+    if server:
+        total_a = max(
+            total,
+            server.get("questions_answered", server.get("total_assignments", total)),
+        )
+        total_q = max(
+            asked,
+            server.get("questions_asked", server.get("total_questions", asked)),
+        )
+
+    lines.append(f" Answers   : {total_a:>5}  ({scored_a} scored)")
+    lines.append(f" Questions : {total_q:>5}  ({scored_q} scored)")
     lines.append(f" Errors    :  {errors:>4}")
     if ans_dist:
         lines.append(f" {'-' * w}")
