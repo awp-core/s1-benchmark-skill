@@ -399,11 +399,16 @@ def detect_agent() -> str:
 
 
 def _purge_agent_sessions() -> None:
-    """Delete all session files for the agent to prevent context overflow.
+    """Delete all session transcripts and reset the index to prevent context overflow.
 
-    OpenClaw sessions are append-only and can grow to 900k+ tokens,
-    far exceeding the model's context window. Purging at startup ensures
-    every CLI call starts fresh.
+    OpenClaw session structure:
+      sessions/
+        sessions.json              (index — maps session keys to IDs)
+        {uuid}.jsonl               (transcript — append-only, grows unbounded)
+        {uuid}.jsonl.lock          (lock file)
+
+    We delete all .jsonl and .lock files, and reset sessions.json to empty {}.
+    This ensures the next CLI call starts with zero context history.
     """
     if not _agent_id:
         log.warning("[AGENT] cannot purge sessions — agent ID not set")
@@ -415,7 +420,14 @@ def _purge_agent_sessions() -> None:
     for f in os.listdir(session_dir):
         fpath = os.path.join(session_dir, f)
         try:
-            if os.path.isfile(fpath):
+            if f == "sessions.json":
+                # Reset index to empty instead of deleting
+                with open(fpath, "w") as fp:
+                    fp.write("{}")
+                count += 1
+            elif os.path.isfile(fpath) and (
+                f.endswith(".jsonl") or f.endswith(".lock")
+            ):
                 os.unlink(fpath)
                 count += 1
         except OSError:
