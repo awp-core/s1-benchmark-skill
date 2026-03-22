@@ -5,7 +5,6 @@ Delegates signing to benchmark-sign.sh.
 When LLM reasoning is needed, calls openclaw agent CLI directly.
 """
 
-import argparse
 import json
 import logging
 import os
@@ -1420,24 +1419,9 @@ def run_loop() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _parse_args() -> argparse.Namespace:
-    """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(description="Benchmark Subnet worker")
-    parser.add_argument(
-        "--agent-name",
-        default="",
-        help="Unique name for this worker instance. Used to isolate files "
-        "and agent names when multiple workers run on the same machine. "
-        "Defaults to wallet address last 6 hex chars.",
-    )
-    return parser.parse_args()
-
-
 def main() -> None:
     """Entry point: setup then main loop."""
     global INSTANCE_ID
-
-    args = _parse_args()
 
     # 1. Check wallet
     address = get_wallet_address()
@@ -1453,10 +1437,8 @@ def main() -> None:
         )
         sys.exit(1)
 
-    # Instance ID: --agent-name takes priority, then wallet address
-    if args.agent_name:
-        INSTANCE_ID = args.agent_name
-    elif not INSTANCE_ID:
+    # Instance ID from wallet address — fully automatic, zero input needed
+    if not INSTANCE_ID:
         INSTANCE_ID = address[-6:].lower()
 
     # Initialize all instance-specific paths

@@ -71,15 +71,12 @@ Then proceed to Launch.
 
 ## Decide What To Do
 
-Determine your agent's own name (e.g., from the current session context) and use it
-to find only YOUR worker's status file:
+The worker isolates by wallet address automatically. Find the running instance:
 
 ```bash
-# Use your agent name to find your own instance (not other agents' workers)
-MY_NAME="<your_agent_name>"  # e.g. "main", "ops", etc.
-STATUS_FILE="/tmp/benchmark-worker-${MY_NAME}-status.json"
+STATUS_FILE=$(ls /tmp/benchmark-worker-*-status.json 2>/dev/null | head -1)
 ALIVE=false
-if [ -f "$STATUS_FILE" ]; then
+if [ -n "$STATUS_FILE" ]; then
   PID=$(jq -r '.pid' "$STATUS_FILE" 2>/dev/null)
   kill -0 "$PID" 2>/dev/null && ALIVE=true
 fi
@@ -175,21 +172,18 @@ If "not registered":
 
 ### Step 4: Start Worker + Notifications
 
-**Zero env vars needed.** Pass `--agent-name` with your own agent name to isolate
-this worker from other agents on the same machine:
+**Zero config.** The worker auto-detects wallet and generates an instance ID.
+Just run it:
 
 ```bash
-# MY_NAME should be your agent's own name (e.g. "main", "ops")
-MY_NAME="<your_agent_name>"
-
-python3 {baseDir}/scripts/benchmark-worker.py --agent-name "$MY_NAME" \
-  > "/tmp/benchmark-worker-${MY_NAME}-stdout.json" \
-  2>> "/tmp/benchmark-worker-${MY_NAME}-startup.log" &
+python3 {baseDir}/scripts/benchmark-worker.py \
+  > /tmp/benchmark-worker-stdout.json \
+  2>> /tmp/benchmark-worker-startup.log &
 WORKER_PID=$!
 sleep 3
 
-# Read instance info from startup file (written by worker)
-STARTUP_FILE="/tmp/benchmark-worker-${MY_NAME}-startup.json"
+# Read instance info from startup file (written by worker, auto-named)
+STARTUP_FILE=$(ls /tmp/benchmark-worker-*-startup.json 2>/dev/null | head -1)
 STARTUP=$(cat "$STARTUP_FILE")
 INSTANCE_ID=$(echo "$STARTUP" | jq -r '.instance_id')
 AGENT_ID=$(echo "$STARTUP" | jq -r '.agent')
