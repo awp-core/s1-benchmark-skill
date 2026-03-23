@@ -368,6 +368,8 @@ def detect_agent() -> str:
     # Try to create it
     log.info("[AGENT] agent '%s' not found, creating...", _agent_id)
     try:
+        # No --model flag: uses OpenClaw's default model.
+        # Hardcoding a model risks failure if user doesn't have that API key.
         result = subprocess.run(
             [
                 _openclaw_bin,
@@ -376,8 +378,6 @@ def detect_agent() -> str:
                 _agent_id,
                 "--workspace",
                 os.path.expanduser(f"~/.openclaw/workspace-{_agent_id}"),
-                "--model",
-                "anthropic/claude-haiku-4-5",
                 "--non-interactive",
             ],
             capture_output=True,
