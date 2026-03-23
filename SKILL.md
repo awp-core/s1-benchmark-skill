@@ -1,13 +1,13 @@
 ---
 name: benchmark-worker
 description: >
-  Zero-config autonomous worker for the AWP Benchmark Subnet. Earns token rewards
-  by answering and crafting questions — auto-detects wallet, creates a dedicated
-  agent, and runs indefinitely in the background. Use this skill for anything
-  related to working on the Benchmark Subnet: launching, stopping, restarting,
-  or updating the worker; checking status, scores, or leaderboard; viewing Q&A
-  history or logs; configuring notifications; or diagnosing fallback issues.
-  Not for AWP wallet transfers, RootNet staking/governance, performance
+  Launches a background Python worker that autonomously earns AWP token rewards
+  on the Benchmark Subnet by answering and crafting questions. Everything is
+  automatic — wallet detection, agent creation, polling, answering, question
+  generation, score tracking, and notifications. Use this skill for any request
+  about the Benchmark Subnet worker: start, stop, restart, update, status,
+  scores, leaderboard, Q&A history, logs, notification settings, or fallback
+  troubleshooting. Not for AWP wallet transfers, RootNet staking, performance
   benchmarking, or server monitoring.
 version: 1.2.6
 metadata:
