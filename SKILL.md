@@ -1,14 +1,14 @@
 ---
 name: benchmark-worker
 description: >
-  Run an autonomous AI worker on the AWP Benchmark Subnet that earns token rewards
-  by answering and crafting benchmark questions. Manages the full worker lifecycle:
-  launch, stop, restart, update, status, scores, notifications, logs, question
-  history, and leaderboard. Triggers on any request related to working on the
-  Benchmark Subnet — starting or stopping the worker, checking status or scores,
-  viewing answered/asked questions, managing notification settings, updating the
-  worker, or troubleshooting fallback issues. Not for AWP wallet transfers, RootNet
-  staking/governance, generic performance benchmarking, or server monitoring.
+  Zero-config autonomous worker for the AWP Benchmark Subnet. Earns token rewards
+  by answering and crafting questions — auto-detects wallet, creates a dedicated
+  agent, and runs indefinitely in the background. Use this skill for anything
+  related to working on the Benchmark Subnet: launching, stopping, restarting,
+  or updating the worker; checking status, scores, or leaderboard; viewing Q&A
+  history or logs; configuring notifications; or diagnosing fallback issues.
+  Not for AWP wallet transfers, RootNet staking/governance, performance
+  benchmarking, or server monitoring.
 version: 1.2.6
 metadata:
   openclaw:
