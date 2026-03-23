@@ -241,13 +241,51 @@ Ask: "Notifications set to **realtime**. Want **summary** or **silent**?"
 - **Auto-restart**: on crash, retries up to 5 times then stops
 - **Stats persist**: across restarts via status file
 
-### Notification Modes (No Restart Needed)
+### Runtime Configuration (No Restart Needed)
+
+Edit `$CONFIG_FILE` to change any setting. Changes take effect on the next loop cycle.
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `notify_mode` | `realtime` | `realtime` (every action), `summary` (periodic), `silent` |
+| `notify_interval` | `300` | Seconds between summary notifications |
+| `notify_channel` | _(empty)_ | Messaging channel (e.g. `telegram`) |
+| `notify_target` | _(empty)_ | Channel target (e.g. chat ID) |
+| `cli_timeout` | `150` | Seconds to wait for agent CLI response (answer + ask) |
+
+Examples:
+```bash
+# Change notification mode
+echo '{"notify_mode": "summary", "notify_interval": 120}' > "$CONFIG_FILE"
+
+# Increase CLI timeout for slow agents
+echo '{"cli_timeout": 200}' > "$CONFIG_FILE"
+
+# Full config
+cat > "$CONFIG_FILE" << EOF
+{
+  "notify_channel": "telegram",
+  "notify_target": "7926654187",
+  "notify_mode": "realtime",
+  "notify_interval": 300,
+  "cli_timeout": 150
+}
+EOF
+```
+
+### Agent Model
+
+The worker auto-creates a dedicated agent using OpenClaw's default model. To use a
+specific model, create the agent manually before launching the worker:
 
 ```bash
-echo '{"notify_mode": "realtime"}' > "$CONFIG_FILE"
-echo '{"notify_mode": "summary", "notify_interval": 120}' > "$CONFIG_FILE"
-echo '{"notify_mode": "silent"}' > "$CONFIG_FILE"
+openclaw agents add benchmark-worker-<wallet_last6> \
+  --workspace ~/.openclaw/workspace-benchmark-worker-<wallet_last6> \
+  --model anthropic/claude-haiku-4-5 \
+  --non-interactive
 ```
+
+If the agent already exists, the worker uses it as-is (does not override the model).
 
 ---
 
