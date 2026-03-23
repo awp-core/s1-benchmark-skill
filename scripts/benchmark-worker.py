@@ -42,7 +42,7 @@ NET_RETRY_SLEEP: int = 10  # seconds after network error
 SUSPEND_SLEEP: int = 60  # seconds when suspended
 UNLOCK_INTERVAL: int = 25 * 60  # re-unlock every 25 minutes
 ASK_INTERVAL: int = 60  # seconds between question submissions (API rate limit: 1/min)
-CLI_TIMEOUT: int = 120  # max seconds for a single openclaw agent CLI call
+CLI_TIMEOUT: int = 150  # default max seconds for openclaw agent CLI call
 MAX_RESTARTS: int = 5  # max auto-restarts before giving up
 RESTART_COOLDOWN: int = 10  # seconds between restart attempts
 
@@ -697,13 +697,15 @@ def _handle_answer(assigned: dict) -> None:
     log.info('[Q#%s] "%s"', qid, question_text[:60])
 
     # Calculate timeout from deadline (cap at CLI_TIMEOUT)
-    timeout = float(CLI_TIMEOUT)
+    cfg = _read_config()
+    max_timeout = float(cfg.get("cli_timeout", CLI_TIMEOUT))
+    timeout = max_timeout
     reply_ddl = assigned.get("reply_ddl", "")
     if reply_ddl:
         try:
             deadline_dt = datetime.fromisoformat(reply_ddl.replace("Z", "+00:00"))
             remaining = (deadline_dt - datetime.now(timezone.utc)).total_seconds() - 15
-            timeout = min(max(remaining, 20), float(CLI_TIMEOUT))
+            timeout = min(max(remaining, 20), max_timeout)
         except (ValueError, TypeError):
             pass
 
@@ -820,7 +822,9 @@ def _handle_ask() -> None:
     response: dict | None = None
 
     # Try CLI
-    cli_text = call_agent(prompt, timeout=CLI_TIMEOUT)
+    cfg = _read_config()
+    ask_timeout = float(cfg.get("cli_timeout", CLI_TIMEOUT))
+    cli_text = call_agent(prompt, timeout=ask_timeout)
     if cli_text:
         response = parse_json_response(cli_text)
         if response:
@@ -890,6 +894,7 @@ def _read_config() -> dict:
         "notify_target": _DEFAULT_NOTIFY_TARGET,
         "notify_mode": _DEFAULT_NOTIFY_MODE,
         "notify_interval": _DEFAULT_NOTIFY_INTERVAL,
+        "cli_timeout": CLI_TIMEOUT,
     }
     try:
         raw = open(CONFIG_FILE).read()  # noqa: SIM115
@@ -1528,6 +1533,7 @@ def main() -> None:
                         "notify_target": _DEFAULT_NOTIFY_TARGET,
                         "notify_mode": _DEFAULT_NOTIFY_MODE,
                         "notify_interval": _DEFAULT_NOTIFY_INTERVAL,
+                        "cli_timeout": CLI_TIMEOUT,
                     },
                     f,
                     indent=2,

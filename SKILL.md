@@ -368,7 +368,8 @@ Runtime config via `$CONFIG_FILE` (hot-reload, no restart):
   "notify_channel": "telegram",
   "notify_target": "7926654187",
   "notify_mode": "realtime",
-  "notify_interval": 300
+  "notify_interval": 300,
+  "cli_timeout": 150
 }
 ```
 
