@@ -9,7 +9,7 @@ description: >
   scores, leaderboard, Q&A history, logs, notification settings, or fallback
   troubleshooting. Not for AWP wallet transfers, RootNet staking, performance
   benchmarking, or server monitoring.
-version: 1.2.6
+version: 1.2.7
 metadata:
   openclaw:
     requires:
