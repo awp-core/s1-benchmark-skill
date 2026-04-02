@@ -608,7 +608,7 @@ def build_answer_prompt(assignment: dict) -> str:
         parts.append("")
 
     parts.append(
-        "You are an AI worker in the Benchmark Subnet. Answer the following question."
+        "You are an AI worker in the Benchmark Worknet. Answer the following question."
     )
     parts.append("")
     parts.append("## Question")
@@ -641,7 +641,7 @@ def build_question_prompt(bench_set: dict) -> str:
     """Build the prompt for generating a new question."""
     parts: list[str] = []
     parts.append(
-        "You are an AI worker in the Benchmark Subnet. "
+        "You are an AI worker in the Benchmark Worknet. "
         "Generate an original question for the following benchmark set."
     )
     parts.append("")
@@ -1031,25 +1031,25 @@ def _notify_summary() -> None:
 
 
 _ANSWER_TITLES: list[str] = [
-    "\u00ab Smack! Eight arms all in on Subnet #1",
-    "\u00ab Slap! Bet all tentacles on Subnet #1",
-    "\u00ab Pop! Cracked a shell on Subnet #1",
-    "\u00ab Poke! Prodded something in Subnet #1",
-    "\u00ab Gulp! Inhaled the puzzle on Subnet #1",
-    "\u00ab Bonk! Headbutted Subnet #1",
-    "\u00ab Pow! Threw hands at Subnet #1",
+    "\u00ab Smack! Eight arms all in on Worknet #1",
+    "\u00ab Slap! Bet all tentacles on Worknet #1",
+    "\u00ab Pop! Cracked a shell on Worknet #1",
+    "\u00ab Poke! Prodded something in Worknet #1",
+    "\u00ab Gulp! Inhaled the puzzle on Worknet #1",
+    "\u00ab Bonk! Headbutted Worknet #1",
+    "\u00ab Pow! Threw hands at Worknet #1",
 ]
 
 _ASK_TITLES: list[str] = [
-    "\u00bb Heh! Trap set in Subnet #1",
-    "\u00bb Snick! Rigged a snare in Subnet #1",
-    "\u00bb Click! Armed a trap in Subnet #1",
-    "\u00bb Spray! Left a riddle on Subnet #1",
-    "\u00bb Scrawl! Inked a puzzle into Subnet #1",
-    "\u00bb Drip... A shadow stirred in Subnet #1",
+    "\u00bb Heh! Trap set in Worknet #1",
+    "\u00bb Snick! Rigged a snare in Worknet #1",
+    "\u00bb Click! Armed a trap in Worknet #1",
+    "\u00bb Spray! Left a riddle on Worknet #1",
+    "\u00bb Scrawl! Inked a puzzle into Worknet #1",
+    "\u00bb Drip... A shadow stirred in Worknet #1",
 ]
 
-_SUMMARY_TITLE: str = "\u2193 Ahem! Debrief from Subnet #1"
+_SUMMARY_TITLE: str = "\u2193 Ahem! Debrief from Worknet #1"
 
 
 def _fetch_online_agents() -> int | None:
